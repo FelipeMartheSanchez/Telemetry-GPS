@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ nombre_pagina }}</title>
+    
+    <!-- Fuente moderna (Poppins) -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+    
+    <!-- Librerías para Mapa (Leaflet) y Socket.IO -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        body {
+            background-color: #f4f7f6;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-top: 10px;
+            margin-bottom: 25px;
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: #1e293b;
+            text-align: center;
+        }
+
+        /* Contenedor de cápsulas/óvalos superiores */
+        .cards-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 15px;
+            max-width: 900px;
+            width: 100%;
+            margin-bottom: 25px;
+        }
+
+        /* Diseño ovalado para cada dato */
+        .card {
+            background: #ffffff;
+            border-radius: 50px; /* Bordes muy redondeados para efecto óvalo */
+            padding: 12px 25px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 1px solid #e2e8f0;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+
+        .card-value {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #0f172a;
+        }
+
+        /* Estilo centrado del Mapa */
+        #map {
+            width: 100%;
+            max-width: 900px;
+            height: 480px;
+            border-radius: 20px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e2e8f0;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>📡 {{ nombre_pagina }}</h1>
+
+    <!-- Óvalos con información en la parte superior -->
+    <div class="cards-container">
+        <div class="card">
+            <span class="card-label">Latitud:</span>
+            <span id="lat" class="card-value">---</span>
+        </div>
+        <div class="card">
+            <span class="card-label">Longitud:</span>
+            <span id="lon" class="card-value">---</span>
+        </div>
+        <div class="card">
+            <span class="card-label">Fecha:</span>
+            <span id="fecha" class="card-value">---</span>
+        </div>
+        <div class="card">
+            <span class="card-label">Hora COL:</span>
+            <span id="hora_col" class="card-value">---</span>
+        </div>
+    </div>
+
+    <!-- Mapa centrado abajo -->
+    <div id="map"></div>
+
+    <script>
+        // Inicializar Mapa centrado en Colombia por defecto
+        const map = L.map('map').setView([4.570868, -74.297333], 6);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        let marker = L.marker([4.570868, -74.297333]).addTo(map)
+            .bindPopup('Esperando ubicación...')
+            .openPopup();
+
+        let esPrimeraUbicacion = true;
+
+        // Conexión Socket.IO
+        const socket = io();
+
+        socket.on('actualizacion_gps', function(msg) {
+            console.log('Datos recibidos:', msg);
+            
+            // Actualizar texto en los óvalos
+            document.getElementById('lat').innerText = msg.latitud;
+            document.getElementById('lon').innerText = msg.longitud;
+            document.getElementById('fecha').innerText = msg.fecha;
+            document.getElementById('hora_col').innerText = msg.hora_col;
+
+            // Convertir coordenadas
+            const lat = parseFloat(msg.latitud);
+            const lon = parseFloat(msg.longitud);
+
+            if (!isNaN(lat) && !isNaN(lon)) {
+                const newLatLng = new L.LatLng(lat, lon);
+                
+                // Actualizar la posición del pin
+                marker.setLatLng(newLatLng);
+                marker.bindPopup(`<b>Ubicación Actual</b><br>Hora: ${msg.hora_col}`);
+
+                if (esPrimeraUbicacion) {
+                    // Solo la primera vez hacemos zoom inicial automático
+                    map.setView(newLatLng, 15);
+                    marker.openPopup();
+                    esPrimeraUbicacion = false;
+                } else {
+                    // En las siguientes actualizaciones, centramos la cámara suavemente
+                    // manteniendo el nivel de zoom que el usuario haya seleccionado.
+                    map.panTo(newLatLng);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
