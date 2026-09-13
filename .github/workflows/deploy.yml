@@ -5,7 +5,7 @@ on:
     branches: [main, dev]
 
 jobs:
-  deploy:
+  deploy-felipe:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to EC2 - Felipe
@@ -14,6 +14,30 @@ jobs:
           host: felipegps.duckdns.org
           username: ubuntu
           key: ${{ secrets.SSH_KEY_FELIPE }}
+          script: |
+            set -e
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              cd /home/ubuntu/telemetry-gps
+              git pull origin main
+              ./venv/bin/pip install -r requirements.txt
+              sudo systemctl restart gps
+              sudo systemctl is-active gps
+            else
+              cd /home/ubuntu/telemetry-gps-dev
+              git pull origin dev
+              ./venv/bin/pip install -r requirements.txt
+              sudo systemctl is-active gps-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start gps-dev"
+            fi
+
+  deploy-carlos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2 - Carlos
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: carlosgps.duckdns.org
+          username: ubuntu
+          key: ${{ secrets.SSH_KEY_CARLOS }}
           script: |
             set -e
             if [ "${{ github.ref_name }}" = "main" ]; then
