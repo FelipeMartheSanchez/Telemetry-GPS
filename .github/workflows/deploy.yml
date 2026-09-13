@@ -5,7 +5,7 @@ on:
     branches: [main, dev]
 
 jobs:
-  deploy:
+  deploy-felipe:
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to EC2 - Felipe
@@ -28,7 +28,10 @@ jobs:
               ./venv/bin/pip install -r requirements.txt
               sudo systemctl is-active gps-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start gps-dev"
             fi
-            
+
+  deploy-carlos:
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy to EC2 - Carlos
         uses: appleboy/ssh-action@v1.0.3
         with:
