@@ -52,6 +52,9 @@ jobs:
               ./venv/bin/pip install -r requirements.txt
               sudo systemctl is-active gps-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start gps-dev"
             fi
+  deploy-david:
+    runs-on: ubuntu-latest
+    steps:
       - name: Deploy to EC2 - David
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -71,4 +74,4 @@ jobs:
               git pull origin dev
               ./venv/bin/pip install -r requirements.txt
               sudo systemctl is-active gps-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start gps-dev"
-            fi
+            fi  
