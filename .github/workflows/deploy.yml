@@ -75,3 +75,26 @@ jobs:
               ./venv/bin/pip install -r requirements.txt
               sudo systemctl is-active gps-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start gps-dev"
             fi
+  deploy-alejandro:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EC2 - Alejandro
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: alejandrogps.duckdns.org
+          username: ubuntu
+          key: ${{ secrets.SSH_KEY_ALEJANDRO }}
+          script: |
+            set -e
+            if [ "${{ github.ref_name }}" = "main" ]; then
+              cd /home/ubuntu/telemetry-gps
+              git pull origin main
+              ./venv/bin/pip install -r requirements.txt
+              sudo systemctl restart telemetry-prod
+              sudo systemctl is-active telemetry-prod
+            else
+              cd /home/ubuntu/telemetry-gps-dev
+              git pull origin dev
+              ./venv/bin/pip install -r requirements.txt
+              sudo systemctl is-active telemetry-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start telemetry-dev"
+            fi
