@@ -169,9 +169,7 @@
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        let marker = L.marker([4.570868, -74.297333]).addTo(map)
-            .bindPopup('Esperando ubicación...')
-            .openPopup();
+        let marker = L.marker([4.570868, -74.297333]).addTo(map);
 
         let esPrimeraUbicacion = true;
 
@@ -209,8 +207,7 @@
 
                 // Actualizar la posición del pin
                 marker.setLatLng(newLatLng);
-                marker.bindPopup(`<b>Ubicación Actual</b><br>Hora: ${msg.hora_col}`);
-
+                
                 // Agregar el punto al recorrido y extender la línea.
                 // addLatLng() agrega un vértice al final sin redibujar todo.
                 puntosRecorrido.push(newLatLng);
@@ -220,7 +217,6 @@
                 if (esPrimeraUbicacion) {
                     // Solo la primera vez hacemos zoom inicial automático
                     map.setView(newLatLng, 15);
-                    marker.openPopup();
                     esPrimeraUbicacion = false;
                 } else {
                     // En las siguientes actualizaciones, centramos la cámara suavemente
