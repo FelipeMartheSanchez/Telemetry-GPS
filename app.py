@@ -131,7 +131,7 @@ def consultar_historial(desde_utc, hasta_utc):
         puntos.append({
             'lat': float(fila['latitud']),
             'lon': float(fila['longitud']),
-            'hora': marca.strftime('%d/%m/%Y %H:%M:%S')
+            'hora': marca.strftime('%d/%m/%Y %I:%M:%S %p')
         })
     return puntos
 
