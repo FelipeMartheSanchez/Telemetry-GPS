@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Histórico - {{ nombre_pagina }}</title>
+
+    <!-- Fuente moderna (Poppins) -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+
+    <!-- Mapa (Leaflet) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Selector de fecha y hora (flatpickr) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/l10n/es.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        body {
+            background-color: #f4f7f6;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-top: 10px;
+            margin-bottom: 15px;
+            font-size: 1.8rem;
+            font-weight: 600;
+            color: #1e293b;
+            text-align: center;
+        }
+
+        /* Pestañas de navegación entre las dos vistas */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 25px;
+            background: #e2e8f0;
+            padding: 5px;
+            border-radius: 50px;
+        }
+
+        .tab {
+            padding: 8px 22px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #64748b;
+            transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .tab:hover {
+            color: #1e293b;
+        }
+
+        .tab.activa {
+            background: #ffffff;
+            color: #2563eb;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        }
+
+        /* Fila de controles: los dos campos de fecha y el botón */
+        .controles {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: flex-end;
+            gap: 15px;
+            max-width: 900px;
+            width: 100%;
+            background: #ffffff;
+            padding: 20px 25px;
+            border-radius: 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e2e8f0;
+            margin-bottom: 20px;
+        }
+
+        .campo {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .campo label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+
+        .campo input {
+            padding: 10px 16px;
+            border: 1px solid #cbd5e1;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            color: #0f172a;
+            background: #f8fafc;
+            width: 230px;
+            cursor: pointer;
+        }
+
+        .campo input:focus {
+            outline: none;
+            border-color: #2563eb;
+            background: #ffffff;
+        }
+
+        #btnConsultar {
+            padding: 11px 30px;
+            border: none;
+            border-radius: 50px;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.2s ease;
+        }
+
+        #btnConsultar:hover:not(:disabled) {
+            background: #1d4ed8;
+            transform: translateY(-2px);
+        }
+
+        #btnConsultar:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Mensajes de aviso y error */
+        #mensaje {
+            max-width: 900px;
+            width: 100%;
+            padding: 14px 20px;
+            border-radius: 15px;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        #mensaje.info {
+            background: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+        }
+
+        #mensaje.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+        }
+
+        /* Cápsulas con el resumen del recorrido consultado */
+        .cards-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 15px;
+            max-width: 900px;
+            width: 100%;
+            margin-bottom: 25px;
+        }
+
+        .card {
+            background: #dbeafe;
+            border-radius: 50px;
+            padding: 12px 25px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 1px solid #e2e8f0;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+
+        .card-value {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #0f172a;
+        }
+
+        #map {
+            width: 100%;
+            max-width: 900px;
+            height: 480px;
+            border-radius: 20px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e2e8f0;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🕘 Histórico del Recorrido</h1>
+
+    <!-- Navegación entre la vista en vivo y el histórico -->
+    <div class="tabs">
+        <a href="/" class="tab">📡 En vivo</a>
+        <a href="/historial" class="tab activa">🕘 Histórico</a>
+    </div>
+
+    <!-- Controles: el usuario elige la ventana de tiempo -->
+    <div class="controles">
+        <div class="campo">
+            <label for="desde">Desde</label>
+            <input type="text" id="desde" placeholder="Selecciona fecha y hora">
+        </div>
+        <div class="campo">
+            <label for="hasta">Hasta</label>
+            <input type="text" id="hasta" placeholder="Selecciona fecha y hora">
+        </div>
+        <button id="btnConsultar">Consultar</button>
+    </div>
+
+    <div id="mensaje"></div>
+
+    <!-- Resumen del recorrido consultado -->
+    <div class="cards-container">
+        <div class="card">
+            <span class="card-label">Puntos:</span>
+            <span id="totalPuntos" class="card-value">0</span>
+        </div>
+        <div class="card">
+            <span class="card-label">Inicio:</span>
+            <span id="horaInicio" class="card-value">---</span>
+        </div>
+        <div class="card">
+            <span class="card-label">Fin:</span>
+            <span id="horaFin" class="card-value">---</span>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // ===== Primera Parte: el mapa =====
+        // Esta página NO abre Socket.IO. El histórico funciona al revés que la
+        // vista en vivo: aquí el navegador PIDE los datos (pull) en lugar de
+        // recibirlos empujados por el servidor (push).
+        const map = L.map('map').setView([4.570868, -74.297333], 6);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Capa que agrupa todo lo dibujado: línea + marcadores de inicio y fin.
+        // Tenerlo agrupado permite borrarlo entero antes de cada consulta nueva.
+        let capaRecorrido = L.layerGroup().addTo(map);
+
+        // ===== Segunda Parte: el selector de fecha y hora =====
+        // time_24hr: false obliga el formato de 12 horas con a.m./p.m.
+        // El campo visible (altInput) muestra 15/09/2026 06:11 PM,
+        // pero el valor real que se envía queda como 2026-09-15 18:11.
+        const configFecha = {
+            enableTime: true,
+            time_24hr: false,
+            dateFormat: "Y-m-d H:i",
+            altInput: true,
+            altFormat: "d/m/Y h:i K",
+            locale: "es",
+            maxDate: new Date(),
+            minuteIncrement: 1
+        };
+
+        const pickerDesde = flatpickr("#desde", configFecha);
+        const pickerHasta = flatpickr("#hasta", configFecha);
+
+        // ===== Tercera Parte: utilidades =====
+        const mensaje = document.getElementById('mensaje');
+        const boton = document.getElementById('btnConsultar');
+
+        function mostrarMensaje(texto, tipo) {
+            mensaje.innerText = texto;
+            mensaje.className = tipo;
+            mensaje.style.display = 'block';
+        }
+
+        function ocultarMensaje() {
+            mensaje.style.display = 'none';
+        }
+
+        function limpiarResumen() {
+            document.getElementById('totalPuntos').innerText = '0';
+            document.getElementById('horaInicio').innerText = '---';
+            document.getElementById('horaFin').innerText = '---';
+        }
+
+        // ===== Cuarta Parte: dibujar el recorrido =====
+        function dibujarRecorrido(puntos) {
+            capaRecorrido.clearLayers();
+
+            const coordenadas = puntos.map(p => [p.lat, p.lon]);
+
+            L.polyline(coordenadas, {
+                color: '#2563eb',
+                weight: 4,
+                opacity: 0.75
+            }).addTo(capaRecorrido);
+
+            const inicio = puntos[0];
+            const fin = puntos[puntos.length - 1];
+
+            // Círculos de color en lugar de pines: no necesitan imágenes
+            // externas y dejan claro el sentido del recorrido.
+            L.circleMarker([inicio.lat, inicio.lon], {
+                radius: 9, color: '#ffffff', weight: 2,
+                fillColor: '#16a34a', fillOpacity: 1
+            }).addTo(capaRecorrido).bindPopup(`<b>Inicio</b><br>${inicio.hora}`);
+
+            L.circleMarker([fin.lat, fin.lon], {
+                radius: 9, color: '#ffffff', weight: 2,
+                fillColor: '#dc2626', fillOpacity: 1
+            }).addTo(capaRecorrido).bindPopup(`<b>Fin</b><br>${fin.hora}`);
+
+            // fitBounds encuadra toda la ruta. El maxZoom evita que, si el
+            // vehículo estuvo casi quieto, el mapa se acerque tanto que se
+            // pierda el contexto de las calles.
+            map.fitBounds(L.latLngBounds(coordenadas), {
+                padding: [40, 40],
+                maxZoom: 17
+            });
+        }
+
+        // ===== Quinta Parte: la consulta al servidor =====
+        async function consultar() {
+            const desde = document.getElementById('desde').value;
+            const hasta = document.getElementById('hasta').value;
+
+            if (!desde || !hasta) {
+                mostrarMensaje('Selecciona la fecha y hora de inicio y de fin.', 'error');
+                return;
+            }
+
+            // Validación en el navegador: avisa sin gastar una petición.
+            if (desde >= hasta) {
+                mostrarMensaje('La fecha inicial debe ser anterior a la final.', 'error');
+                return;
+            }
+
+            // El backend espera el formato ISO con T entre fecha y hora.
+            const desdeIso = desde.replace(' ', 'T');
+            const hastaIso = hasta.replace(' ', 'T');
+
+            boton.disabled = true;
+            boton.innerText = 'Consultando...';
+            ocultarMensaje();
+
+            try {
+                const url = `/api/historial?desde=${desdeIso}&hasta=${hastaIso}`;
+                const respuesta = await fetch(url);
+                const datos = await respuesta.json();
+
+                if (!respuesta.ok) {
+                    mostrarMensaje(datos.error || 'Error en la consulta.', 'error');
+                    return;
+                }
+
+                if (datos.total === 0) {
+                    capaRecorrido.clearLayers();
+                    limpiarResumen();
+                    mostrarMensaje(
+                        'No hay registros en ese rango. Prueba con otras fechas.',
+                        'info'
+                    );
+                    return;
+                }
+
+                dibujarRecorrido(datos.puntos);
+
+                document.getElementById('totalPuntos').innerText = datos.total;
+                document.getElementById('horaInicio').innerText = datos.puntos[0].hora;
+                document.getElementById('horaFin').innerText =
+                    datos.puntos[datos.total - 1].hora;
+
+                if (datos.truncado) {
+                    mostrarMensaje(
+                        'El rango tiene demasiados puntos y se recortó. ' +
+                        'Reduce la ventana de tiempo para ver el recorrido completo.',
+                        'info'
+                    );
+                }
+
+            } catch (error) {
+                console.error(error);
+                mostrarMensaje('No se pudo conectar con el servidor.', 'error');
+            } finally {
+                // finally se ejecuta pase lo que pase: así el botón nunca
+                // se queda bloqueado si algo falla a mitad de camino.
+                boton.disabled = false;
+                boton.innerText = 'Consultar';
+            }
+        }
+
+        boton.addEventListener('click', consultar);
+    </script>
+</body>
+</html>

@@ -1,8 +1,10 @@
 import os
 import socket
 import mysql.connector
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
-from flask import Flask, render_template
+from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 
 # Carga las variables del archivo .env que esta junto a app.py.
@@ -18,6 +20,12 @@ DB_NAME = os.getenv('DB_NAME')
 UDP_PORT = int(os.getenv('UDP_PORT', '5000'))
 WEB_PORT = int(os.getenv('WEB_PORT', '80'))
 
+# --- Historico: zonas horarias y tope de puntos por consulta ---
+# MySQL guarda en UTC; el usuario piensa en hora de Colombia (UTC-5).
+BOGOTA = ZoneInfo('America/Bogota')
+UTC = ZoneInfo('UTC')
+LIMITE_PUNTOS = 5000
+
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
@@ -29,19 +37,23 @@ def separar_fecha_hora(valor):
     except Exception:
         return valor, valor
 
+def conectar_mysql():
+    """Abre una conexion a MySQL con los datos del .env."""
+    return mysql.connector.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME,
+        connection_timeout=5
+    )
+
 def guardar_en_mysql(datos):
     if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME]):
         print("Faltan variables de base de datos en el .env. No se guarda el registro.")
         return
     try:
-        conexion = mysql.connector.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            connection_timeout=5
-        )
+        conexion = conectar_mysql()
         cursor = conexion.cursor()
         consulta = """
             INSERT INTO ubicaciones (latitud, longitud, fecha, hora_col)
@@ -80,12 +92,90 @@ def udp_listener():
             socketio.emit('actualizacion_gps', datos_json)
             guardar_en_mysql(datos_json)
 
+# --- Historico: traduccion de hora local a UTC ---
+def a_utc(texto):
+    """Convierte '2026-09-15T18:00' (hora de Colombia) a texto UTC para MySQL.
+
+    El navegador envia la hora que el usuario ve en pantalla, sin zona horaria.
+    MySQL guarda en UTC. Esta funcion es el traductor entre los dos mundos.
+    """
+    local = datetime.fromisoformat(texto).replace(tzinfo=BOGOTA)
+    return local.astimezone(UTC).strftime('%Y-%m-%d %H:%M:%S')
+
+# --- Historico: consulta de la ventana de tiempo ---
+def consultar_historial(desde_utc, hasta_utc):
+    """Devuelve los puntos guardados entre dos instantes, en orden cronologico.
+
+    Se filtra por fecha_registro (timestamp) y no por fecha/hora_col, porque
+    esas dos son varchar y no se pueden comparar ni ordenar correctamente.
+    """
+    conexion = conectar_mysql()
+    cursor = conexion.cursor(dictionary=True)
+    consulta = """
+        SELECT latitud, longitud, fecha_registro
+        FROM ubicaciones
+        WHERE fecha_registro BETWEEN %s AND %s
+        ORDER BY fecha_registro ASC
+        LIMIT %s
+    """
+    cursor.execute(consulta, (desde_utc, hasta_utc, LIMITE_PUNTOS))
+    filas = cursor.fetchall()
+    cursor.close()
+    conexion.close()
+
+    puntos = []
+    for fila in filas:
+        # fecha_registro sale de MySQL en UTC y sin zona: se la marcamos
+        # y la traducimos a hora de Colombia para mostrarla.
+        marca = fila['fecha_registro'].replace(tzinfo=UTC).astimezone(BOGOTA)
+        puntos.append({
+            'lat': float(fila['latitud']),
+            'lon': float(fila['longitud']),
+            'hora': marca.strftime('%d/%m/%Y %I:%M:%S %p')
+        })
+    return puntos
+
 @app.route('/')
 def index():
     return render_template('index.html', nombre_pagina=NOMBRE_PAGINA)
+
+# --- Historico: pagina y endpoint de consulta ---
+@app.route('/historial')
+def historial():
+    return render_template('historial.html', nombre_pagina=NOMBRE_PAGINA)
+
+@app.route('/api/historial')
+def api_historial():
+    desde = request.args.get('desde')
+    hasta = request.args.get('hasta')
+
+    if not desde or not hasta:
+        return jsonify({'error': 'Faltan los parametros desde y hasta'}), 400
+
+    try:
+        desde_utc = a_utc(desde)
+        hasta_utc = a_utc(hasta)
+    except ValueError:
+        return jsonify({'error': 'Formato de fecha invalido'}), 400
+
+    if desde_utc >= hasta_utc:
+        return jsonify({'error': 'La fecha inicial debe ser anterior a la final'}), 400
+
+    try:
+        puntos = consultar_historial(desde_utc, hasta_utc)
+    except Exception as error:
+        print(f"Error consultando el historial: {error}")
+        return jsonify({'error': 'No se pudo consultar la base de datos'}), 500
+
+    return jsonify({
+        'puntos': puntos,
+        'total': len(puntos),
+        'truncado': len(puntos) >= LIMITE_PUNTOS
+    })
 
 if __name__ == '__main__':
     print(f"Página: {NOMBRE_PAGINA}")
     socketio.start_background_task(udp_listener)
     print(f"Iniciando servidor Web en el puerto {WEB_PORT}...")
     socketio.run(app, host='0.0.0.0', port=WEB_PORT, allow_unsafe_werkzeug=True)
+    

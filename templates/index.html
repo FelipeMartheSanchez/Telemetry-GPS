@@ -33,11 +33,41 @@
 
         h1 {
             margin-top: 10px;
-            margin-bottom: 25px;
+            margin-bottom: 15px;
             font-size: 1.8rem;
             font-weight: 600;
             color: #1e293b;
             text-align: center;
+        }
+
+        /* Pestañas de navegación entre las dos vistas */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 25px;
+            background: #e2e8f0;
+            padding: 5px;
+            border-radius: 50px;
+        }
+
+        .tab {
+            padding: 8px 22px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #64748b;
+            transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .tab:hover {
+            color: #1e293b;
+        }
+
+        .tab.activa {
+            background: #ffffff;
+            color: #2563eb;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
         }
 
         /* Contenedor de cápsulas/óvalos superiores */
@@ -98,6 +128,12 @@
 
     <h1>📡 {{ nombre_pagina }}</h1>
 
+    <!-- Navegación entre la vista en vivo y el histórico -->
+    <div class="tabs">
+        <a href="/" class="tab activa">📡 En vivo</a>
+        <a href="/historial" class="tab">🕘 Histórico</a>
+    </div>
+
     <!-- Óvalos con información en la parte superior -->
     <div class="cards-container">
         <div class="card">
@@ -133,9 +169,7 @@
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        let marker = L.marker([4.570868, -74.297333]).addTo(map)
-            .bindPopup('Esperando ubicación...')
-            .openPopup();
+        let marker = L.marker([4.570868, -74.297333]).addTo(map);
 
         let esPrimeraUbicacion = true;
 
@@ -173,8 +207,7 @@
 
                 // Actualizar la posición del pin
                 marker.setLatLng(newLatLng);
-                marker.bindPopup(`<b>Ubicación Actual</b><br>Hora: ${msg.hora_col}`);
-
+                
                 // Agregar el punto al recorrido y extender la línea.
                 // addLatLng() agrega un vértice al final sin redibujar todo.
                 puntosRecorrido.push(newLatLng);
@@ -184,7 +217,6 @@
                 if (esPrimeraUbicacion) {
                     // Solo la primera vez hacemos zoom inicial automático
                     map.setView(newLatLng, 15);
-                    marker.openPopup();
                     esPrimeraUbicacion = false;
                 } else {
                     // En las siguientes actualizaciones, centramos la cámara suavemente
