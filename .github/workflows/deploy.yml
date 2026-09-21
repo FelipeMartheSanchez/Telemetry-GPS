@@ -26,7 +26,8 @@ jobs:
               cd /home/ubuntu/telemetry-gps-dev
               git pull origin dev
               ./venv/bin/pip install -r requirements.txt
-              sudo systemctl is-active gps-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start gps-dev"
+              sudo systemctl restart gps-dev
+              sudo systemctl is-active gps-dev
             fi
 
   deploy-carlos:
@@ -50,7 +51,8 @@ jobs:
               cd /home/ubuntu/telemetry-gps-dev
               git pull origin dev
               ./venv/bin/pip install -r requirements.txt
-              sudo systemctl is-active gps-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start gps-dev"
+              sudo systemctl restart gps-dev
+              sudo systemctl is-active gps-dev
             fi
   deploy-david:
     runs-on: ubuntu-latest
@@ -73,7 +75,8 @@ jobs:
               cd /home/ubuntu/telemetry-gps-dev
               git pull origin dev
               ./venv/bin/pip install -r requirements.txt
-              sudo systemctl is-active gps-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start gps-dev"
+              sudo systemctl restart gps-dev
+              sudo systemctl is-active gps-dev
             fi
   deploy-alejandro:
     runs-on: ubuntu-latest
@@ -96,5 +99,6 @@ jobs:
               cd /home/ubuntu/telemetry-gps-dev
               git pull origin dev
               ./venv/bin/pip install -r requirements.txt
-              sudo systemctl is-active telemetry-dev || echo "Servicio de pruebas apagado. Enciendelo con: sudo systemctl start telemetry-dev"
+              sudo systemctl restart telemetry-dev
+              sudo systemctl is-active telemetry-dev
             fi
