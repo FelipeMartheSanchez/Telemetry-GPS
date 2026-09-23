@@ -241,7 +241,7 @@
             color: #991b1b;
         }
 
-        /* Boton para cerrar la pantalla y usar el mapa vacio */
+        /* Boton de reintentar: solo aparece en el estado de error */
         #btnCerrarCarga {
             display: none;
             padding: 8px 22px;
@@ -259,7 +259,6 @@
             background: #1d4ed8;
         }
 
-        #pantallaCarga.advertencia #btnCerrarCarga,
         #pantallaCarga.error #btnCerrarCarga {
             display: inline-block;
         }
@@ -372,7 +371,7 @@
             </svg>
 
             <div id="textoCarga">Conectando con el vehículo...</div>
-            <button id="btnCerrarCarga">Ver mapa</button>
+            <button id="btnCerrarCarga">Reintentar conexión</button>
         </div>
     </div>
 
@@ -404,22 +403,35 @@
         // ===== Pantalla de carga =====
         // Cubre SOLO el mapa, no toda la página: el usuario puede cambiar a
         // la pestaña de Histórico o leer las cápsulas mientras espera.
-        // A los 20 s avisa que está tardando; a los 40 s muestra el error.
-        // En ambos avisos aparece el botón "Ver mapa" para cerrarla.
+        // A los 20 s avisa que está tardando; a los 40 s muestra el error
+        // con el botón "Reintentar conexión".
         const pantallaCarga = document.getElementById('pantallaCarga');
         const textoCarga = document.getElementById('textoCarga');
         const btnCerrarCarga = document.getElementById('btnCerrarCarga');
 
-        const timerAdvertencia = setTimeout(function() {
-            pantallaCarga.classList.add('advertencia');
-            textoCarga.innerText = 'Esto está tardando más de lo normal. Verifica que se haya activado el recorrido.';
-        }, 20000);
+        let timerAdvertencia = null;
+        let timerError = null;
 
-        const timerError = setTimeout(function() {
-            pantallaCarga.classList.remove('advertencia');
-            pantallaCarga.classList.add('error');
-            textoCarga.innerText = 'Ocurrió un error. No se pudo conectar con el vehículo.';
-        }, 40000);
+        // Pone la pantalla en estado "cargando" con el mensaje indicado y
+        // arranca los dos avisos. Se usa al abrir la página y en cada reintento.
+        function iniciarEspera(mensaje) {
+            clearTimeout(timerAdvertencia);
+            clearTimeout(timerError);
+
+            pantallaCarga.classList.remove('advertencia', 'error', 'oculta');
+            textoCarga.innerText = mensaje;
+
+            timerAdvertencia = setTimeout(function() {
+                pantallaCarga.classList.add('advertencia');
+                textoCarga.innerText = 'Esto está tardando más de lo normal. Verifica que se haya activado el recorrido.';
+            }, 20000);
+
+            timerError = setTimeout(function() {
+                pantallaCarga.classList.remove('advertencia');
+                pantallaCarga.classList.add('error');
+                textoCarga.innerText = 'Ocurrió un error. No se pudo conectar con el vehículo.';
+            }, 40000);
+        }
 
         function ocultarPantallaCarga() {
             clearTimeout(timerAdvertencia);
@@ -427,10 +439,19 @@
             pantallaCarga.classList.add('oculta');
         }
 
-        btnCerrarCarga.addEventListener('click', ocultarPantallaCarga);
+        iniciarEspera('Conectando con el vehículo...');
 
         // Conexión Socket.IO
         const socket = io();
+
+        // Reintentar: si la conexión con el servidor se cayó, la reabre,
+        // y vuelve a mostrar el camión esperando el primer dato.
+        btnCerrarCarga.addEventListener('click', function() {
+            if (!socket.connected) {
+                socket.connect();
+            }
+            iniciarEspera('Intentando conectar de nuevo con el vehículo...');
+        });
 
         socket.on('actualizacion_gps', function(msg) {
             // Apenas llega un dato real, se oculta la pantalla de carga
