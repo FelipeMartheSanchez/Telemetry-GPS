@@ -340,6 +340,53 @@
         .etiqueta-inicio::before, .etiqueta-fin::before {
             display: none;
         }
+
+        /* Campo con autocompletado: el contenedor necesita position:relative
+           para que la lista de sugerencias se posicione justo debajo. */
+        .campo-autocompletar {
+            position: relative;
+        }
+
+        .sugerencias {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 4px;
+            width: 100%;
+            min-width: 320px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+            overflow: hidden;
+            z-index: 1200;
+            max-height: 260px;
+            overflow-y: auto;
+        }
+
+        .sugerencia-item {
+            padding: 10px 16px;
+            font-size: 0.85rem;
+            color: #1e293b;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .sugerencia-item:last-child {
+            border-bottom: none;
+        }
+
+        .sugerencia-item:hover,
+        .sugerencia-item.resaltada {
+            background: #dbeafe;
+        }
+
+        .sugerencia-vacia {
+            padding: 10px 16px;
+            font-size: 0.82rem;
+            color: #94a3b8;
+        }
     </style>
 </head>
 <body>
@@ -373,12 +420,14 @@
 
     <!-- Controles del modo "Por lugar" (oculto por defecto) -->
     <div class="controles" id="controlesLugar" style="display: none;">
-        <div class="campo">
+        <div class="campo campo-autocompletar">
             <label for="direccionLugar">Dirección o lugar</label>
             <input type="text" id="direccionLugar" class="campo-texto"
-                   placeholder="Ej: Universidad del Norte, Barranquilla">
+                   placeholder="Escribe para buscar..." autocomplete="off">
+            <!-- Lista desplegable de sugerencias, estilo Google Maps -->
+            <div id="listaSugerencias" class="sugerencias"></div>
         </div>
-        <button id="btnBuscarLugar">Buscar</button>
+        <button id="btnBuscarLugar" disabled>Buscar</button>
     </div>
 
     <div id="mensaje"></div>
@@ -602,6 +651,10 @@
             capaLugar.clearLayers();
             limpiarResumen();
             resultadosLugar.style.display = 'none';
+            inputDireccion.value = '';
+            lugarSeleccionado = null;
+            botonLugar.disabled = true;
+            ocultarSugerencias();
 
             const esFecha = nuevoModo === 'fecha';
             subtabFecha.classList.toggle('activa', esFecha);
@@ -641,13 +694,119 @@
         const botonLugar = document.getElementById('btnBuscarLugar');
         const encabezadoLugar = document.getElementById('encabezadoLugar');
         const listaVisitas = document.getElementById('listaVisitas');
+        const listaSugerencias = document.getElementById('listaSugerencias');
 
-        async function geocodificar(direccion) {
-            const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(direccion)}`;
+        // El lugar que el usuario selecciono de la lista de sugerencias.
+        // Es null mientras no haya elegido ninguna opcion: el boton "Buscar"
+        // solo se habilita cuando esto tiene un valor.
+        let lugarSeleccionado = null;
+
+        // Debounce: espera a que el usuario deje de escribir 400ms antes de
+        // preguntarle a Nominatim. Sin esto, cada letra tecleada dispararia
+        // una peticion nueva y se saturaria el servicio (que es gratuito).
+        let temporizadorBusqueda = null;
+        let indiceResaltado = -1;
+        let sugerenciasActuales = [];
+
+        async function buscarSugerencias(texto) {
+            const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(texto)}`;
             const respuesta = await fetch(url, { headers: { 'Accept-Language': 'es' } });
-            const resultados = await respuesta.json();
-            return resultados.length > 0 ? resultados[0] : null;
+            return respuesta.json();
         }
+
+        function mostrarSugerencias(resultados) {
+            sugerenciasActuales = resultados;
+            indiceResaltado = -1;
+            listaSugerencias.innerHTML = '';
+
+            if (resultados.length === 0) {
+                listaSugerencias.innerHTML = '<div class="sugerencia-vacia">Sin resultados. Intenta con otro texto.</div>';
+                listaSugerencias.style.display = 'block';
+                return;
+            }
+
+            resultados.forEach(function(lugar, indice) {
+                const item = document.createElement('div');
+                item.className = 'sugerencia-item';
+                item.innerText = lugar.display_name;
+                item.addEventListener('click', function() {
+                    seleccionarLugar(lugar);
+                });
+                listaSugerencias.appendChild(item);
+            });
+
+            listaSugerencias.style.display = 'block';
+        }
+
+        function ocultarSugerencias() {
+            listaSugerencias.style.display = 'none';
+            sugerenciasActuales = [];
+            indiceResaltado = -1;
+        }
+
+        function seleccionarLugar(lugar) {
+            lugarSeleccionado = lugar;
+            inputDireccion.value = lugar.display_name;
+            ocultarSugerencias();
+            botonLugar.disabled = false;
+        }
+
+        // Si el usuario edita el texto despues de haber elegido una opcion,
+        // esa seleccion queda invalida hasta que elija una nueva de la lista.
+        inputDireccion.addEventListener('input', function() {
+            lugarSeleccionado = null;
+            botonLugar.disabled = true;
+
+            const texto = inputDireccion.value.trim();
+            clearTimeout(temporizadorBusqueda);
+
+            if (texto.length < 3) {
+                ocultarSugerencias();
+                return;
+            }
+
+            temporizadorBusqueda = setTimeout(async function() {
+                try {
+                    const resultados = await buscarSugerencias(texto);
+                    mostrarSugerencias(resultados);
+                } catch (error) {
+                    console.error(error);
+                    ocultarSugerencias();
+                }
+            }, 400);
+        });
+
+        // Navegacion con flechas y Enter, igual que un autocompletado normal.
+        inputDireccion.addEventListener('keydown', function(evento) {
+            const items = listaSugerencias.querySelectorAll('.sugerencia-item');
+            if (items.length === 0) return;
+
+            if (evento.key === 'ArrowDown') {
+                evento.preventDefault();
+                indiceResaltado = Math.min(indiceResaltado + 1, items.length - 1);
+                actualizarResaltado(items);
+            } else if (evento.key === 'ArrowUp') {
+                evento.preventDefault();
+                indiceResaltado = Math.max(indiceResaltado - 1, 0);
+                actualizarResaltado(items);
+            } else if (evento.key === 'Enter' && indiceResaltado >= 0) {
+                evento.preventDefault();
+                seleccionarLugar(sugerenciasActuales[indiceResaltado]);
+            }
+        });
+
+        function actualizarResaltado(items) {
+            items.forEach((item, indice) => {
+                item.classList.toggle('resaltada', indice === indiceResaltado);
+            });
+        }
+
+        // Cierra la lista si el usuario hace clic fuera del campo o de la lista.
+        document.addEventListener('click', function(evento) {
+            if (!evento.target.closest('.campo-autocompletar')) {
+                ocultarSugerencias();
+            }
+        });
 
         function dibujarLugar(lat, lon, radioMetros, nombre) {
             capaLugar.clearLayers();
@@ -733,12 +892,12 @@
         }
 
         async function buscarPorLugar() {
-            const direccion = inputDireccion.value.trim();
-
-            if (!direccion) {
-                mostrarMensaje('Escribe una dirección o lugar para buscar.', 'error');
+            if (!lugarSeleccionado) {
+                mostrarMensaje('Selecciona un lugar de la lista de sugerencias.', 'error');
                 return;
             }
+
+            const lugar = lugarSeleccionado;
 
             botonLugar.disabled = true;
             botonLugar.innerText = 'Buscando...';
@@ -749,13 +908,6 @@
             limpiarResumen();
 
             try {
-                const lugar = await geocodificar(direccion);
-
-                if (!lugar) {
-                    mostrarMensaje('No se encontró esa dirección. Intenta ser más específico.', 'error');
-                    return;
-                }
-
                 const lat = parseFloat(lugar.lat);
                 const lon = parseFloat(lugar.lon);
 
