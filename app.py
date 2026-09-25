@@ -68,6 +68,47 @@ def guardar_en_mysql(datos):
     except Exception as error:
         print(f"Error al conectar/guardar en MySQL: {error}")
 
+# --- Viajes: marcas de inicio y fin de recorrido ---
+# Se disparan cuando la app Android manda los mensajes cortos
+# "INICIO_RECORRIDO" / "FIN_RECORRIDO" (distintos al bloque de 5 lineas
+# de una coordenada normal), justo cuando el usuario presiona los botones
+# Iniciar/Finalizar. No se infieren los limites del viaje revisando huecos
+# de tiempo: el propio usuario confirma cuando empieza y cuando termina.
+def registrar_inicio_viaje():
+    """Crea una fila nueva en viajes al recibir INICIO_RECORRIDO. fin queda NULL."""
+    try:
+        conexion = conectar_mysql()
+        cursor = conexion.cursor()
+        cursor.execute("INSERT INTO viajes (inicio) VALUES (NOW())")
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        print("--> Viaje iniciado.")
+    except Exception as error:
+        print(f"Error al registrar inicio de viaje: {error}")
+
+def registrar_fin_viaje():
+    """Cierra el viaje abierto mas reciente (fin IS NULL) al recibir FIN_RECORRIDO."""
+    try:
+        conexion = conectar_mysql()
+        cursor = conexion.cursor()
+        cursor.execute("""
+            UPDATE viajes SET fin = NOW()
+            WHERE fin IS NULL
+            ORDER BY inicio DESC
+            LIMIT 1
+        """)
+        conexion.commit()
+        filas_afectadas = cursor.rowcount
+        cursor.close()
+        conexion.close()
+        if filas_afectadas == 0:
+            print("--> FIN_RECORRIDO recibido, pero no habia ningun viaje abierto.")
+        else:
+            print("--> Viaje finalizado.")
+    except Exception as error:
+        print(f"Error al registrar fin de viaje: {error}")
+
 def udp_listener():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', UDP_PORT))
@@ -75,7 +116,18 @@ def udp_listener():
 
     while True:
         data, addr = sock.recvfrom(1024)
-        mensaje = data.decode('utf-8')
+        mensaje = data.decode('utf-8').strip()
+
+        # Marcas de inicio/fin de viaje: mensajes cortos, distintos al
+        # bloque de 5 lineas que trae una coordenada normal. Se revisan
+        # primero para no intentar interpretarlas como una ubicacion.
+        if mensaje == "INICIO_RECORRIDO":
+            registrar_inicio_viaje()
+            continue
+        elif mensaje == "FIN_RECORRIDO":
+            registrar_fin_viaje()
+            continue
+
         lineas = mensaje.split('\n')
 
         if len(lineas) >= 5:
@@ -178,4 +230,3 @@ if __name__ == '__main__':
     socketio.start_background_task(udp_listener)
     print(f"Iniciando servidor Web en el puerto {WEB_PORT}...")
     socketio.run(app, host='0.0.0.0', port=WEB_PORT, allow_unsafe_werkzeug=True)
-    
