@@ -112,15 +112,155 @@
             color: #0f172a;
         }
 
+        /* Contenedor del mapa: la pantalla de carga se posiciona encima
+           del mapa unicamente, no de toda la pagina. */
+        .mapa-contenedor {
+            position: relative;
+            width: 100%;
+            max-width: 900px;
+        }
+
         /* Estilo centrado del Mapa */
         #map {
             width: 100%;
-            max-width: 900px;
             height: 480px;
             border-radius: 20px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
             border: 1px solid #e2e8f0;
             overflow: hidden;
+        }
+
+        /* ===== Pantalla de carga (solo sobre el mapa) ===== */
+        #pantallaCarga {
+            position: absolute;
+            inset: 0;
+            border-radius: 20px;
+            background: rgba(244, 247, 246, 0.95);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            z-index: 1001;          /* por encima de los controles de Leaflet (1000) */
+            transition: opacity 0.4s ease;
+        }
+
+        #pantallaCarga.oculta {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #camionSvg {
+            width: 230px;
+            height: auto;
+            overflow: visible;
+        }
+
+        /* El cuerpo del camion rebota suavemente, como si fuera andando */
+        .camion-cuerpo {
+            animation: rebote 0.6s ease-in-out infinite alternate;
+        }
+
+        @keyframes rebote {
+            from { transform: translateY(0); }
+            to   { transform: translateY(-2px); }
+        }
+
+        /* Ruedas girando: fill-box hace que cada rueda gire sobre su propio centro */
+        .rueda {
+            transform-box: fill-box;
+            transform-origin: center;
+            animation: girar 0.8s linear infinite;
+        }
+
+        @keyframes girar {
+            from { transform: rotate(0deg); }
+            to   { transform: rotate(360deg); }
+        }
+
+        /* Lineas de la carretera moviendose hacia atras */
+        .carretera {
+            animation: avanzar 0.6s linear infinite;
+        }
+
+        @keyframes avanzar {
+            from { transform: translateX(0); }
+            to   { transform: translateX(-40px); }
+        }
+
+        /* Lineas de velocidad detras del camion */
+        .velocidad line {
+            animation: parpadeo 0.8s ease-in-out infinite;
+        }
+
+        .velocidad line:nth-child(2) { animation-delay: 0.2s; }
+        .velocidad line:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes parpadeo {
+            0%, 100% { opacity: 0.2; }
+            50%      { opacity: 0.8; }
+        }
+
+        /* Estado de error: todo se detiene, llantas espichadas, camion inclinado */
+        #pantallaCarga.error .camion-cuerpo,
+        #pantallaCarga.error .carretera,
+        #pantallaCarga.error .velocidad line {
+            animation: none;
+        }
+
+        #pantallaCarga.error .velocidad {
+            display: none;
+        }
+
+        #pantallaCarga.error .rueda {
+            animation: none;
+            transform-origin: center bottom;
+            transform: scale(1.12, 0.7);
+        }
+
+        #pantallaCarga.error .camion-cuerpo {
+            transform: rotate(-3deg) translateY(5px);
+            transform-box: fill-box;
+            transform-origin: center bottom;
+        }
+
+        #textoCarga {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #64748b;
+            text-align: center;
+            max-width: 320px;
+            padding: 0 15px;
+        }
+
+        #pantallaCarga.advertencia #textoCarga {
+            color: #b45309;
+        }
+
+        #pantallaCarga.error #textoCarga {
+            color: #991b1b;
+        }
+
+        /* Boton de reintentar: solo aparece en el estado de error */
+        #btnCerrarCarga {
+            display: none;
+            padding: 8px 22px;
+            border: none;
+            border-radius: 50px;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        #btnCerrarCarga:hover {
+            background: #1d4ed8;
+        }
+
+        #pantallaCarga.error #btnCerrarCarga {
+            display: inline-block;
         }
     </style>
 </head>
@@ -158,8 +298,82 @@
         </div>
     </div>
 
-    <!-- Mapa centrado abajo -->
-    <div id="map"></div>
+    <!-- Mapa con su pantalla de carga encima -->
+    <div class="mapa-contenedor">
+        <div id="map"></div>
+
+        <div id="pantallaCarga">
+            <svg id="camionSvg" viewBox="0 0 240 150" xmlns="http://www.w3.org/2000/svg">
+                <!-- Carretera -->
+                <line x1="0" y1="138" x2="240" y2="138" stroke="#cbd5e1" stroke-width="3" stroke-linecap="round"/>
+                <g class="carretera">
+                    <line x1="0"   y1="146" x2="20"  y2="146" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="40"  y1="146" x2="60"  y2="146" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="80"  y1="146" x2="100" y2="146" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="120" y1="146" x2="140" y2="146" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="160" y1="146" x2="180" y2="146" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="200" y1="146" x2="220" y2="146" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+                    <line x1="240" y1="146" x2="260" y2="146" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+                </g>
+
+                <!-- Lineas de velocidad -->
+                <g class="velocidad" stroke="#93c5fd" stroke-width="3" stroke-linecap="round">
+                    <line x1="0"  y1="55" x2="14" y2="55"/>
+                    <line x1="4"  y1="70" x2="14" y2="70"/>
+                    <line x1="0"  y1="85" x2="14" y2="85"/>
+                </g>
+
+                <!-- Sombra -->
+                <ellipse cx="125" cy="136" rx="100" ry="4" fill="#0f172a" opacity="0.12"/>
+
+                <g class="camion-cuerpo">
+                    <!-- Caja de carga -->
+                    <rect x="22" y="28" width="122" height="72" rx="10" fill="#2563eb"/>
+                    <rect x="22" y="28" width="122" height="14" rx="10" fill="#3b82f6"/>
+                    <rect x="22" y="36" width="122" height="6" fill="#3b82f6"/>
+                    <!-- Lineas de la puerta trasera -->
+                    <line x1="32" y1="48" x2="32" y2="92" stroke="#1d4ed8" stroke-width="2" stroke-linecap="round"/>
+
+                    <!-- Pin de ubicacion en la caja (telemetria GPS) -->
+                    <path d="M83 48 c-9 0 -15 7 -15 15 c0 11 15 25 15 25 s15 -14 15 -25 c0 -8 -6 -15 -15 -15 z" fill="#ffffff"/>
+                    <circle cx="83" cy="63" r="5.5" fill="#2563eb"/>
+
+                    <!-- Cabina -->
+                    <path d="M148 50 h36 q7 0 11 6 l17 24 q3 4 3 9 v19 h-67 z" fill="#1d4ed8"/>
+                    <!-- Ventana -->
+                    <path d="M158 57 h24 q4 0 6 3 l12 18 h-42 z" fill="#dbeafe"/>
+                    <path d="M162 60 l6 0 l-4 14 l-5 0 z" fill="#ffffff" opacity="0.7"/>
+                    <!-- Manija de la puerta -->
+                    <rect x="162" y="86" width="10" height="3" rx="1.5" fill="#93c5fd"/>
+                    <!-- Faro -->
+                    <rect x="207" y="92" width="8" height="7" rx="2" fill="#fde68a"/>
+
+                    <!-- Chasis y parachoques -->
+                    <rect x="18" y="100" width="198" height="10" rx="4" fill="#1e3a8a"/>
+                    <rect x="208" y="104" width="12" height="7" rx="3" fill="#475569"/>
+                </g>
+
+                <!-- Ruedas -->
+                <g class="rueda">
+                    <circle cx="58" cy="118" r="17" fill="#0f172a"/>
+                    <circle cx="58" cy="118" r="9" fill="#cbd5e1"/>
+                    <line x1="58" y1="110" x2="58" y2="126" stroke="#64748b" stroke-width="2.5"/>
+                    <line x1="50" y1="118" x2="66" y2="118" stroke="#64748b" stroke-width="2.5"/>
+                    <circle cx="58" cy="118" r="3" fill="#334155"/>
+                </g>
+                <g class="rueda">
+                    <circle cx="180" cy="118" r="17" fill="#0f172a"/>
+                    <circle cx="180" cy="118" r="9" fill="#cbd5e1"/>
+                    <line x1="180" y1="110" x2="180" y2="126" stroke="#64748b" stroke-width="2.5"/>
+                    <line x1="172" y1="118" x2="188" y2="118" stroke="#64748b" stroke-width="2.5"/>
+                    <circle cx="180" cy="118" r="3" fill="#334155"/>
+                </g>
+            </svg>
+
+            <div id="textoCarga">Conectando con el vehículo...</div>
+            <button id="btnCerrarCarga">Reintentar conexión</button>
+        </div>
+    </div>
 
     <script>
         // Inicializar Mapa centrado en Colombia por defecto
@@ -186,10 +400,64 @@
             opacity: 0.75
         }).addTo(map);
 
+        // ===== Pantalla de carga =====
+        // Cubre SOLO el mapa, no toda la página: el usuario puede cambiar a
+        // la pestaña de Histórico o leer las cápsulas mientras espera.
+        // A los 20 s avisa que está tardando; a los 40 s muestra el error
+        // con el botón "Reintentar conexión".
+        const pantallaCarga = document.getElementById('pantallaCarga');
+        const textoCarga = document.getElementById('textoCarga');
+        const btnCerrarCarga = document.getElementById('btnCerrarCarga');
+
+        let timerAdvertencia = null;
+        let timerError = null;
+
+        // Pone la pantalla en estado "cargando" con el mensaje indicado y
+        // arranca los dos avisos. Se usa al abrir la página y en cada reintento.
+        function iniciarEspera(mensaje) {
+            clearTimeout(timerAdvertencia);
+            clearTimeout(timerError);
+
+            pantallaCarga.classList.remove('advertencia', 'error', 'oculta');
+            textoCarga.innerText = mensaje;
+
+            timerAdvertencia = setTimeout(function() {
+                pantallaCarga.classList.add('advertencia');
+                textoCarga.innerText = 'Esto está tardando más de lo normal. Verifica que se haya activado el recorrido.';
+            }, 20000);
+
+            timerError = setTimeout(function() {
+                pantallaCarga.classList.remove('advertencia');
+                pantallaCarga.classList.add('error');
+                textoCarga.innerText = 'Ocurrió un error. No se pudo conectar con el vehículo.';
+            }, 40000);
+        }
+
+        function ocultarPantallaCarga() {
+            clearTimeout(timerAdvertencia);
+            clearTimeout(timerError);
+            pantallaCarga.classList.add('oculta');
+        }
+
+        iniciarEspera('Conectando con el vehículo...');
+
         // Conexión Socket.IO
         const socket = io();
 
+        // Reintentar: si la conexión con el servidor se cayó, la reabre,
+        // y vuelve a mostrar el camión esperando el primer dato.
+        btnCerrarCarga.addEventListener('click', function() {
+            if (!socket.connected) {
+                socket.connect();
+            }
+            iniciarEspera('Intentando conectar de nuevo con el vehículo...');
+        });
+
         socket.on('actualizacion_gps', function(msg) {
+            // Apenas llega un dato real, se oculta la pantalla de carga
+            // sin importar en qué estado estaba.
+            ocultarPantallaCarga();
+
             console.log('Datos recibidos:', msg);
 
             // Actualizar texto en los óvalos
@@ -207,9 +475,8 @@
 
                 // Actualizar la posición del pin
                 marker.setLatLng(newLatLng);
-                
+
                 // Agregar el punto al recorrido y extender la línea.
-                // addLatLng() agrega un vértice al final sin redibujar todo.
                 puntosRecorrido.push(newLatLng);
                 lineaRecorrido.addLatLng(newLatLng);
                 document.getElementById('puntos').innerText = puntosRecorrido.length;
@@ -219,8 +486,7 @@
                     map.setView(newLatLng, 15);
                     esPrimeraUbicacion = false;
                 } else {
-                    // En las siguientes actualizaciones, centramos la cámara suavemente
-                    // manteniendo el nivel de zoom que el usuario haya seleccionado.
+                    // Centramos la cámara suavemente manteniendo el zoom del usuario
                     map.panTo(newLatLng);
                 }
             }
