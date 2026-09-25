@@ -148,6 +148,9 @@
            un selector, asi que no lleva el cursor: pointer del calendario. */
         .campo input[type="text"].campo-texto {
             cursor: text;
+        }
+
+        .envoltura-input {
             width: 320px;
         }
 
@@ -347,6 +350,43 @@
             position: relative;
         }
 
+        .envoltura-input {
+            position: relative;
+        }
+
+        /* El input necesita espacio a la derecha para no quedar debajo
+           del boton de limpiar. */
+        .envoltura-input .campo-texto {
+            width: 100%;
+            padding-right: 34px;
+        }
+
+        .btn-limpiar {
+            display: none;
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 22px;
+            height: 22px;
+            border: none;
+            border-radius: 50%;
+            background: #cbd5e1;
+            color: #ffffff;
+            font-size: 1rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .btn-limpiar:hover {
+            background: #94a3b8;
+        }
+
+        /* Solo se muestra cuando el campo tiene texto */
+        .envoltura-input.con-texto .btn-limpiar {
+            display: block;
+        }
+
         .sugerencias {
             display: none;
             position: absolute;
@@ -422,8 +462,11 @@
     <div class="controles" id="controlesLugar" style="display: none;">
         <div class="campo campo-autocompletar">
             <label for="direccionLugar">Dirección o lugar</label>
-            <input type="text" id="direccionLugar" class="campo-texto"
-                   placeholder="Escribe para buscar..." autocomplete="off">
+            <div class="envoltura-input">
+                <input type="text" id="direccionLugar" class="campo-texto"
+                       placeholder="Escribe para buscar..." autocomplete="off">
+                <button type="button" id="btnLimpiarLugar" class="btn-limpiar" title="Borrar búsqueda">&times;</button>
+            </div>
             <!-- Lista desplegable de sugerencias, estilo Google Maps -->
             <div id="listaSugerencias" class="sugerencias"></div>
         </div>
@@ -655,6 +698,9 @@
             lugarSeleccionado = null;
             botonLugar.disabled = true;
             ocultarSugerencias();
+            if (typeof envolturaInput !== 'undefined') {
+                envolturaInput.classList.remove('con-texto');
+            }
 
             const esFecha = nuevoModo === 'fecha';
             subtabFecha.classList.toggle('activa', esFecha);
@@ -695,6 +741,8 @@
         const encabezadoLugar = document.getElementById('encabezadoLugar');
         const listaVisitas = document.getElementById('listaVisitas');
         const listaSugerencias = document.getElementById('listaSugerencias');
+        const btnLimpiarLugar = document.getElementById('btnLimpiarLugar');
+        const envolturaInput = inputDireccion.closest('.envoltura-input');
 
         // El lugar que el usuario selecciono de la lista de sugerencias.
         // Es null mientras no haya elegido ninguna opcion: el boton "Buscar"
@@ -758,6 +806,7 @@
             botonLugar.disabled = true;
 
             const texto = inputDireccion.value.trim();
+            envolturaInput.classList.toggle('con-texto', texto.length > 0);
             clearTimeout(temporizadorBusqueda);
 
             if (texto.length < 3) {
@@ -807,6 +856,25 @@
                 ocultarSugerencias();
             }
         });
+
+        // Boton "x": borra el texto, la seleccion, las sugerencias y el
+        // resultado que estuviera dibujado en el mapa, para volver a buscar
+        // desde cero sin tener que borrar letra por letra.
+        function limpiarBusquedaLugar() {
+            inputDireccion.value = '';
+            lugarSeleccionado = null;
+            botonLugar.disabled = true;
+            envolturaInput.classList.remove('con-texto');
+            ocultarSugerencias();
+            ocultarMensaje();
+            resultadosLugar.style.display = 'none';
+            capaLugar.clearLayers();
+            capaRecorrido.clearLayers();
+            limpiarResumen();
+            inputDireccion.focus();
+        }
+
+        btnLimpiarLugar.addEventListener('click', limpiarBusquedaLugar);
 
         function dibujarLugar(lat, lon, radioMetros, nombre) {
             capaLugar.clearLayers();
