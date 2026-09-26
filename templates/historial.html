@@ -44,11 +44,11 @@
             text-align: center;
         }
 
-        /* Pestañas de navegación entre las dos vistas */
+        /* Pestañas de navegación entre las dos vistas (En vivo / Histórico) */
         .tabs {
             display: flex;
             gap: 8px;
-            margin-bottom: 25px;
+            margin-bottom: 18px;
             background: #e2e8f0;
             padding: 5px;
             border-radius: 50px;
@@ -72,6 +72,35 @@
             background: #ffffff;
             color: #2563eb;
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        }
+
+        /* Sub-pestañas: Por fecha / Por lugar, dentro del histórico */
+        .subtabs {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 20px;
+            background: #f1f5f9;
+            padding: 4px;
+            border-radius: 50px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .subtab {
+            padding: 7px 20px;
+            border-radius: 50px;
+            border: none;
+            background: transparent;
+            font-family: 'Poppins', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #64748b;
+            cursor: pointer;
+            transition: background 0.2s ease, color 0.2s ease;
+        }
+
+        .subtab.activa {
+            background: #2563eb;
+            color: #ffffff;
         }
 
         /* Fila de controles: los dos campos de fecha y el botón */
@@ -115,13 +144,23 @@
             cursor: pointer;
         }
 
+        /* El campo de direccion (modo "Por lugar") es de texto libre, no
+           un selector, asi que no lleva el cursor: pointer del calendario. */
+        .campo input[type="text"].campo-texto {
+            cursor: text;
+        }
+
+        .envoltura-input {
+            width: 320px;
+        }
+
         .campo input:focus {
             outline: none;
             border-color: #2563eb;
             background: #ffffff;
         }
 
-        #btnConsultar {
+        #btnConsultar, #btnBuscarLugar {
             padding: 11px 30px;
             border: none;
             border-radius: 50px;
@@ -133,12 +172,12 @@
             transition: background 0.2s ease, transform 0.2s ease;
         }
 
-        #btnConsultar:hover:not(:disabled) {
+        #btnConsultar:hover:not(:disabled), #btnBuscarLugar:hover:not(:disabled) {
             background: #1d4ed8;
             transform: translateY(-2px);
         }
 
-        #btnConsultar:disabled {
+        #btnConsultar:disabled, #btnBuscarLugar:disabled {
             background: #94a3b8;
             cursor: not-allowed;
             transform: none;
@@ -208,6 +247,74 @@
             color: #0f172a;
         }
 
+        /* Panel de resultados del modo "Por lugar": nombre del sitio,
+           radio de busqueda y la lista de visitas encontradas. */
+        #resultadosLugar {
+            display: none;
+            max-width: 900px;
+            width: 100%;
+            background: #ffffff;
+            border-radius: 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            border: 1px solid #e2e8f0;
+            padding: 20px 25px;
+            margin-bottom: 25px;
+        }
+
+        #encabezadoLugar {
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 4px;
+        }
+
+        .radio-info {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #64748b;
+        }
+
+        #listaVisitas {
+            margin-top: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .visita-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease;
+        }
+
+        .visita-item:hover {
+            background: #dbeafe;
+            border-color: #93c5fd;
+        }
+
+        .visita-hora {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .visita-detalle {
+            font-size: 0.78rem;
+            font-weight: 500;
+            color: #64748b;
+        }
+
+        .visita-vacia {
+            font-size: 0.88rem;
+            color: #64748b;
+            padding: 10px 0;
+        }
+
         #map {
             width: 100%;
             max-width: 900px;
@@ -216,6 +323,109 @@
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
             border: 1px solid #e2e8f0;
             overflow: hidden;
+        }
+
+        /* Etiquetas permanentes sobre los circulos de inicio y fin */
+        .etiqueta-inicio, .etiqueta-fin {
+            font-family: 'Poppins', sans-serif;
+            font-weight: 600;
+            font-size: 0.75rem;
+            padding: 3px 10px;
+            border-radius: 10px;
+            border: none;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+            color: #ffffff;
+        }
+
+        .etiqueta-inicio { background: #16a34a; }
+        .etiqueta-fin { background: #dc2626; }
+
+        .etiqueta-inicio::before, .etiqueta-fin::before {
+            display: none;
+        }
+
+        /* Campo con autocompletado: el contenedor necesita position:relative
+           para que la lista de sugerencias se posicione justo debajo. */
+        .campo-autocompletar {
+            position: relative;
+        }
+
+        .envoltura-input {
+            position: relative;
+        }
+
+        /* El input necesita espacio a la derecha para no quedar debajo
+           del boton de limpiar. */
+        .envoltura-input .campo-texto {
+            width: 100%;
+            padding-right: 34px;
+        }
+
+        .btn-limpiar {
+            display: none;
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 22px;
+            height: 22px;
+            border: none;
+            border-radius: 50%;
+            background: #cbd5e1;
+            color: #ffffff;
+            font-size: 1rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+
+        .btn-limpiar:hover {
+            background: #94a3b8;
+        }
+
+        /* Solo se muestra cuando el campo tiene texto */
+        .envoltura-input.con-texto .btn-limpiar {
+            display: block;
+        }
+
+        .sugerencias {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 4px;
+            width: 100%;
+            min-width: 320px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+            overflow: hidden;
+            z-index: 1200;
+            max-height: 260px;
+            overflow-y: auto;
+        }
+
+        .sugerencia-item {
+            padding: 10px 16px;
+            font-size: 0.85rem;
+            color: #1e293b;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .sugerencia-item:last-child {
+            border-bottom: none;
+        }
+
+        .sugerencia-item:hover,
+        .sugerencia-item.resaltada {
+            background: #dbeafe;
+        }
+
+        .sugerencia-vacia {
+            padding: 10px 16px;
+            font-size: 0.82rem;
+            color: #94a3b8;
         }
     </style>
 </head>
@@ -229,8 +439,14 @@
         <a href="/historial" class="tab activa">🕘 Histórico</a>
     </div>
 
-    <!-- Controles: el usuario elige la ventana de tiempo -->
-    <div class="controles">
+    <!-- Sub-pestañas: como se elige que se va a consultar -->
+    <div class="subtabs">
+        <button id="subtabFecha" class="subtab activa">Por fecha</button>
+        <button id="subtabLugar" class="subtab">Por lugar</button>
+    </div>
+
+    <!-- Controles del modo "Por fecha" -->
+    <div class="controles" id="controlesFecha">
         <div class="campo">
             <label for="desde">Desde</label>
             <input type="text" id="desde" placeholder="Selecciona fecha y hora">
@@ -242,9 +458,24 @@
         <button id="btnConsultar">Consultar</button>
     </div>
 
+    <!-- Controles del modo "Por lugar" (oculto por defecto) -->
+    <div class="controles" id="controlesLugar" style="display: none;">
+        <div class="campo campo-autocompletar">
+            <label for="direccionLugar">Dirección o lugar</label>
+            <div class="envoltura-input">
+                <input type="text" id="direccionLugar" class="campo-texto"
+                       placeholder="Escribe para buscar..." autocomplete="off">
+                <button type="button" id="btnLimpiarLugar" class="btn-limpiar" title="Borrar búsqueda">&times;</button>
+            </div>
+            <!-- Lista desplegable de sugerencias, estilo Google Maps -->
+            <div id="listaSugerencias" class="sugerencias"></div>
+        </div>
+        <button id="btnBuscarLugar" disabled>Buscar</button>
+    </div>
+
     <div id="mensaje"></div>
 
-    <!-- Resumen del recorrido consultado -->
+    <!-- Resumen del recorrido consultado (modo "Por fecha" y ruta de una visita) -->
     <div class="cards-container">
         <div class="card">
             <span class="card-label">Puntos:</span>
@@ -260,6 +491,12 @@
         </div>
     </div>
 
+    <!-- Resultados del modo "Por lugar": nombre del sitio y lista de visitas -->
+    <div id="resultadosLugar">
+        <div id="encabezadoLugar"></div>
+        <div id="listaVisitas"></div>
+    </div>
+
     <div id="map"></div>
 
     <script>
@@ -273,14 +510,21 @@
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        // Capa que agrupa todo lo dibujado: línea + marcadores de inicio y fin.
-        // Tenerlo agrupado permite borrarlo entero antes de cada consulta nueva.
+        // Capa de la ruta (linea + marcadores de inicio/fin). Se usa tanto
+        // en el modo "Por fecha" como al ver la ruta de una visita especifica.
         let capaRecorrido = L.layerGroup().addTo(map);
+
+        // Capa del lugar buscado (marcador + circulo del radio). Es aparte
+        // de capaRecorrido para que, al hacer clic en una visita, la ruta se
+        // dibuje SIN borrar el marcador del lugar: asi el usuario sigue viendo
+        // donde queda el sitio con respecto al viaje completo.
+        let capaLugar = L.layerGroup().addTo(map);
 
         // ===== Segunda Parte: el selector de fecha y hora =====
         // time_24hr: false obliga el formato de 12 horas con a.m./p.m.
-        // El campo visible (altInput) muestra 15/09/2026 06:11 PM,
-        // pero el valor real que se envía queda como 2026-09-15 18:11.
+        // onChange oculta el mensaje de error apenas el usuario elige una
+        // fecha nueva, en vez de dejarlo pegado hasta el proximo clic en
+        // "Consultar".
         const configFecha = {
             enableTime: true,
             time_24hr: false,
@@ -289,7 +533,10 @@
             altFormat: "d/m/Y h:i K",
             locale: "es",
             maxDate: new Date(),
-            minuteIncrement: 1
+            minuteIncrement: 1,
+            onChange: function() {
+                ocultarMensaje();
+            }
         };
 
         const pickerDesde = flatpickr("#desde", configFecha);
@@ -315,6 +562,16 @@
             document.getElementById('horaFin').innerText = '---';
         }
 
+        // Limpia el mapa y el resumen juntos. Se llama en CADA camino de
+        // error (fechas invalidas, error del backend, fallo de red), no
+        // solo cuando la consulta no encuentra resultados: sin esto, un
+        // error dejaba la ruta de la consulta anterior dibujada, dando la
+        // falsa impresion de que corresponde a la consulta que fallo.
+        function limpiarMapaYResumen() {
+            capaRecorrido.clearLayers();
+            limpiarResumen();
+        }
+
         // ===== Cuarta Parte: dibujar el recorrido =====
         function dibujarRecorrido(puntos) {
             capaRecorrido.clearLayers();
@@ -330,17 +587,32 @@
             const inicio = puntos[0];
             const fin = puntos[puntos.length - 1];
 
-            // Círculos de color en lugar de pines: no necesitan imágenes
-            // externas y dejan claro el sentido del recorrido.
+            // Circulos de color en lugar de pines, con etiqueta permanente
+            // (no hace falta clic para saber cual es cual) y el popup con
+            // la hora exacta al hacer clic.
             L.circleMarker([inicio.lat, inicio.lon], {
                 radius: 9, color: '#ffffff', weight: 2,
                 fillColor: '#16a34a', fillOpacity: 1
-            }).addTo(capaRecorrido).bindPopup(`<b>Inicio</b><br>${inicio.hora}`);
+            }).addTo(capaRecorrido)
+              .bindPopup(`<b>Inicio</b><br>${inicio.hora}`)
+              .bindTooltip('Inicio', {
+                  permanent: true,
+                  direction: 'top',
+                  offset: [0, -10],
+                  className: 'etiqueta-inicio'
+              });
 
             L.circleMarker([fin.lat, fin.lon], {
                 radius: 9, color: '#ffffff', weight: 2,
                 fillColor: '#dc2626', fillOpacity: 1
-            }).addTo(capaRecorrido).bindPopup(`<b>Fin</b><br>${fin.hora}`);
+            }).addTo(capaRecorrido)
+              .bindPopup(`<b>Fin</b><br>${fin.hora}`)
+              .bindTooltip('Fin', {
+                  permanent: true,
+                  direction: 'top',
+                  offset: [0, -10],
+                  className: 'etiqueta-fin'
+              });
 
             // fitBounds encuadra toda la ruta. El maxZoom evita que, si el
             // vehículo estuvo casi quieto, el mapa se acerque tanto que se
@@ -351,23 +623,23 @@
             });
         }
 
-        // ===== Quinta Parte: la consulta al servidor =====
+        // ===== Quinta Parte: consulta por fecha =====
         async function consultar() {
             const desde = document.getElementById('desde').value;
             const hasta = document.getElementById('hasta').value;
 
             if (!desde || !hasta) {
+                limpiarMapaYResumen();
                 mostrarMensaje('Selecciona la fecha y hora de inicio y de fin.', 'error');
                 return;
             }
 
-            // Validación en el navegador: avisa sin gastar una petición.
             if (desde >= hasta) {
+                limpiarMapaYResumen();
                 mostrarMensaje('La fecha inicial debe ser anterior a la final.', 'error');
                 return;
             }
 
-            // El backend espera el formato ISO con T entre fecha y hora.
             const desdeIso = desde.replace(' ', 'T');
             const hastaIso = hasta.replace(' ', 'T');
 
@@ -381,13 +653,13 @@
                 const datos = await respuesta.json();
 
                 if (!respuesta.ok) {
+                    limpiarMapaYResumen();
                     mostrarMensaje(datos.error || 'Error en la consulta.', 'error');
                     return;
                 }
 
                 if (datos.total === 0) {
-                    capaRecorrido.clearLayers();
-                    limpiarResumen();
+                    limpiarMapaYResumen();
                     mostrarMensaje(
                         'No hay registros en ese rango. Prueba con otras fechas.',
                         'info'
@@ -412,16 +684,341 @@
 
             } catch (error) {
                 console.error(error);
+                limpiarMapaYResumen();
                 mostrarMensaje('No se pudo conectar con el servidor.', 'error');
             } finally {
-                // finally se ejecuta pase lo que pase: así el botón nunca
-                // se queda bloqueado si algo falla a mitad de camino.
                 boton.disabled = false;
                 boton.innerText = 'Consultar';
             }
         }
 
         boton.addEventListener('click', consultar);
+
+        // ===== Sexta Parte: sub-pestañas Por fecha / Por lugar =====
+        const subtabFecha = document.getElementById('subtabFecha');
+        const subtabLugar = document.getElementById('subtabLugar');
+        const controlesFecha = document.getElementById('controlesFecha');
+        const controlesLugar = document.getElementById('controlesLugar');
+        const resultadosLugar = document.getElementById('resultadosLugar');
+
+        function cambiarModo(nuevoModo) {
+            ocultarMensaje();
+            capaRecorrido.clearLayers();
+            capaLugar.clearLayers();
+            limpiarResumen();
+            resultadosLugar.style.display = 'none';
+            inputDireccion.value = '';
+            lugarSeleccionado = null;
+            botonLugar.disabled = true;
+            ocultarSugerencias();
+            if (typeof envolturaInput !== 'undefined') {
+                envolturaInput.classList.remove('con-texto');
+            }
+
+            const esFecha = nuevoModo === 'fecha';
+            subtabFecha.classList.toggle('activa', esFecha);
+            subtabLugar.classList.toggle('activa', !esFecha);
+            controlesFecha.style.display = esFecha ? 'flex' : 'none';
+            controlesLugar.style.display = esFecha ? 'none' : 'flex';
+        }
+
+        subtabFecha.addEventListener('click', () => cambiarModo('fecha'));
+        subtabLugar.addEventListener('click', () => cambiarModo('lugar'));
+
+        // ===== Séptima Parte: modo "Por lugar" =====
+        //
+        // CONTRATO ESPERADO del backend, GET /api/lugar?lat=&lon= :
+        // {
+        //   "radio_metros": 100,
+        //   "visitas": [
+        //     {
+        //       "entrada": "15/09/2026 08:12:03 AM",   // para mostrar
+        //       "salida":  "15/09/2026 08:47:10 AM",   // para mostrar
+        //       "entrada_iso": "2026-09-15T08:12:03",  // hora Colombia, para /api/historial
+        //       "salida_iso":  "2026-09-15T08:47:10",  // hora Colombia, para /api/historial
+        //       "puntos": 12,
+        //       "viaje_inicio": "2026-09-15T08:05:00", // limites del viaje completo
+        //       "viaje_fin":    "2026-09-15T09:00:00", // (null si el dato es anterior
+        //     }                                        //  a la marca INICIO/FIN_RECORRIDO)
+        //   ],
+        //   "total_visitas": 2
+        // }
+        //
+        // La geocodificacion (texto -> coordenadas) se hace aqui mismo, en el
+        // navegador, llamando a Nominatim (el buscador de OpenStreetMap,
+        // mismo proveedor que las tiles del mapa). El backend nunca ve el
+        // texto de la direccion, solo lat/lon ya resueltos.
+
+        const inputDireccion = document.getElementById('direccionLugar');
+        const botonLugar = document.getElementById('btnBuscarLugar');
+        const encabezadoLugar = document.getElementById('encabezadoLugar');
+        const listaVisitas = document.getElementById('listaVisitas');
+        const listaSugerencias = document.getElementById('listaSugerencias');
+        const btnLimpiarLugar = document.getElementById('btnLimpiarLugar');
+        const envolturaInput = inputDireccion.closest('.envoltura-input');
+
+        // El lugar que el usuario selecciono de la lista de sugerencias.
+        // Es null mientras no haya elegido ninguna opcion: el boton "Buscar"
+        // solo se habilita cuando esto tiene un valor.
+        let lugarSeleccionado = null;
+
+        // Debounce: espera a que el usuario deje de escribir 400ms antes de
+        // preguntarle a Nominatim. Sin esto, cada letra tecleada dispararia
+        // una peticion nueva y se saturaria el servicio (que es gratuito).
+        let temporizadorBusqueda = null;
+        let indiceResaltado = -1;
+        let sugerenciasActuales = [];
+
+        async function buscarSugerencias(texto) {
+            const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(texto)}`;
+            const respuesta = await fetch(url, { headers: { 'Accept-Language': 'es' } });
+            return respuesta.json();
+        }
+
+        function mostrarSugerencias(resultados) {
+            sugerenciasActuales = resultados;
+            indiceResaltado = -1;
+            listaSugerencias.innerHTML = '';
+
+            if (resultados.length === 0) {
+                listaSugerencias.innerHTML = '<div class="sugerencia-vacia">Sin resultados. Intenta con otro texto.</div>';
+                listaSugerencias.style.display = 'block';
+                return;
+            }
+
+            resultados.forEach(function(lugar, indice) {
+                const item = document.createElement('div');
+                item.className = 'sugerencia-item';
+                item.innerText = lugar.display_name;
+                item.addEventListener('click', function() {
+                    seleccionarLugar(lugar);
+                });
+                listaSugerencias.appendChild(item);
+            });
+
+            listaSugerencias.style.display = 'block';
+        }
+
+        function ocultarSugerencias() {
+            listaSugerencias.style.display = 'none';
+            sugerenciasActuales = [];
+            indiceResaltado = -1;
+        }
+
+        function seleccionarLugar(lugar) {
+            lugarSeleccionado = lugar;
+            inputDireccion.value = lugar.display_name;
+            ocultarSugerencias();
+            botonLugar.disabled = false;
+        }
+
+        // Si el usuario edita el texto despues de haber elegido una opcion,
+        // esa seleccion queda invalida hasta que elija una nueva de la lista.
+        inputDireccion.addEventListener('input', function() {
+            lugarSeleccionado = null;
+            botonLugar.disabled = true;
+
+            const texto = inputDireccion.value.trim();
+            envolturaInput.classList.toggle('con-texto', texto.length > 0);
+            clearTimeout(temporizadorBusqueda);
+
+            if (texto.length < 3) {
+                ocultarSugerencias();
+                return;
+            }
+
+            temporizadorBusqueda = setTimeout(async function() {
+                try {
+                    const resultados = await buscarSugerencias(texto);
+                    mostrarSugerencias(resultados);
+                } catch (error) {
+                    console.error(error);
+                    ocultarSugerencias();
+                }
+            }, 400);
+        });
+
+        // Navegacion con flechas y Enter, igual que un autocompletado normal.
+        inputDireccion.addEventListener('keydown', function(evento) {
+            const items = listaSugerencias.querySelectorAll('.sugerencia-item');
+            if (items.length === 0) return;
+
+            if (evento.key === 'ArrowDown') {
+                evento.preventDefault();
+                indiceResaltado = Math.min(indiceResaltado + 1, items.length - 1);
+                actualizarResaltado(items);
+            } else if (evento.key === 'ArrowUp') {
+                evento.preventDefault();
+                indiceResaltado = Math.max(indiceResaltado - 1, 0);
+                actualizarResaltado(items);
+            } else if (evento.key === 'Enter' && indiceResaltado >= 0) {
+                evento.preventDefault();
+                seleccionarLugar(sugerenciasActuales[indiceResaltado]);
+            }
+        });
+
+        function actualizarResaltado(items) {
+            items.forEach((item, indice) => {
+                item.classList.toggle('resaltada', indice === indiceResaltado);
+            });
+        }
+
+        // Cierra la lista si el usuario hace clic fuera del campo o de la lista.
+        document.addEventListener('click', function(evento) {
+            if (!evento.target.closest('.campo-autocompletar')) {
+                ocultarSugerencias();
+            }
+        });
+
+        // Boton "x": borra el texto, la seleccion, las sugerencias y el
+        // resultado que estuviera dibujado en el mapa, para volver a buscar
+        // desde cero sin tener que borrar letra por letra.
+        function limpiarBusquedaLugar() {
+            inputDireccion.value = '';
+            lugarSeleccionado = null;
+            botonLugar.disabled = true;
+            envolturaInput.classList.remove('con-texto');
+            ocultarSugerencias();
+            ocultarMensaje();
+            resultadosLugar.style.display = 'none';
+            capaLugar.clearLayers();
+            capaRecorrido.clearLayers();
+            limpiarResumen();
+            inputDireccion.focus();
+        }
+
+        btnLimpiarLugar.addEventListener('click', limpiarBusquedaLugar);
+
+        function dibujarLugar(lat, lon, radioMetros, nombre) {
+            capaLugar.clearLayers();
+
+            L.marker([lat, lon]).addTo(capaLugar).bindPopup(`<b>${nombre}</b>`);
+
+            L.circle([lat, lon], {
+                radius: radioMetros,
+                color: '#2563eb',
+                weight: 2,
+                fillColor: '#2563eb',
+                fillOpacity: 0.12
+            }).addTo(capaLugar);
+
+            map.setView([lat, lon], 16);
+        }
+
+        function mostrarVisitas(visitas, nombreLugar, radioMetros) {
+            resultadosLugar.style.display = 'block';
+            encabezadoLugar.innerHTML =
+                `📍 ${nombreLugar}<br><span class="radio-info">Radio de búsqueda: ${radioMetros} metros</span>`;
+
+            listaVisitas.innerHTML = '';
+
+            if (visitas.length === 0) {
+                listaVisitas.innerHTML = '<div class="visita-vacia">No se encontraron visitas a este lugar.</div>';
+                return;
+            }
+
+            visitas.forEach(function(visita) {
+                const item = document.createElement('div');
+                item.className = 'visita-item';
+                item.innerHTML = `
+                    <span class="visita-hora">🕐 ${visita.entrada} → ${visita.salida}</span>
+                    <span class="visita-detalle">${visita.puntos} punto(s)</span>
+                `;
+                item.addEventListener('click', function() {
+                    verRutaDeVisita(visita);
+                });
+                listaVisitas.appendChild(item);
+            });
+        }
+
+        // Al hacer clic en una visita, se dibuja la ruta completa del viaje
+        // que la contiene (desde que se presiono "Iniciar" hasta "Finalizar"
+        // en la app), reutilizando el mismo endpoint /api/historial y la
+        // misma funcion dibujarRecorrido() del modo "Por fecha".
+        async function verRutaDeVisita(visita) {
+            const usaLimitesDeViaje = Boolean(visita.viaje_inicio && visita.viaje_fin);
+            const desde = usaLimitesDeViaje ? visita.viaje_inicio : visita.entrada_iso;
+            const hasta = usaLimitesDeViaje ? visita.viaje_fin : visita.salida_iso;
+
+            ocultarMensaje();
+
+            try {
+                const url = `/api/historial?desde=${desde}&hasta=${hasta}`;
+                const respuesta = await fetch(url);
+                const datos = await respuesta.json();
+
+                if (!respuesta.ok || datos.total === 0) {
+                    limpiarMapaYResumen();
+                    mostrarMensaje('No se pudo reconstruir la ruta de esta visita.', 'error');
+                    return;
+                }
+
+                dibujarRecorrido(datos.puntos);
+
+                document.getElementById('totalPuntos').innerText = datos.total;
+                document.getElementById('horaInicio').innerText = datos.puntos[0].hora;
+                document.getElementById('horaFin').innerText =
+                    datos.puntos[datos.total - 1].hora;
+
+                if (!usaLimitesDeViaje) {
+                    mostrarMensaje(
+                        'Este registro es anterior a la marca de inicio/fin de viaje: ' +
+                        'se muestra solo el tramo cercano al lugar, no la ruta completa.',
+                        'info'
+                    );
+                }
+            } catch (error) {
+                console.error(error);
+                limpiarMapaYResumen();
+                mostrarMensaje('No se pudo conectar con el servidor.', 'error');
+            }
+        }
+
+        async function buscarPorLugar() {
+            if (!lugarSeleccionado) {
+                mostrarMensaje('Selecciona un lugar de la lista de sugerencias.', 'error');
+                return;
+            }
+
+            const lugar = lugarSeleccionado;
+
+            botonLugar.disabled = true;
+            botonLugar.innerText = 'Buscando...';
+            ocultarMensaje();
+            resultadosLugar.style.display = 'none';
+            capaLugar.clearLayers();
+            capaRecorrido.clearLayers();
+            limpiarResumen();
+
+            try {
+                const lat = parseFloat(lugar.lat);
+                const lon = parseFloat(lugar.lon);
+
+                const respuesta = await fetch(`/api/lugar?lat=${lat}&lon=${lon}`);
+                const datos = await respuesta.json();
+
+                if (!respuesta.ok) {
+                    mostrarMensaje(datos.error || 'Error consultando el lugar.', 'error');
+                    return;
+                }
+
+                dibujarLugar(lat, lon, datos.radio_metros, lugar.display_name);
+                mostrarVisitas(datos.visitas, lugar.display_name, datos.radio_metros);
+
+                if (datos.total_visitas === 0) {
+                    mostrarMensaje('El vehículo no registró visitas a este lugar.', 'info');
+                }
+
+            } catch (error) {
+                console.error(error);
+                mostrarMensaje('No se pudo completar la búsqueda.', 'error');
+            } finally {
+                botonLugar.disabled = false;
+                botonLugar.innerText = 'Buscar';
+            }
+        }
+
+        botonLugar.addEventListener('click', buscarPorLugar);
     </script>
 </body>
 </html>
