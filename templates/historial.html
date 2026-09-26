@@ -562,6 +562,16 @@
             document.getElementById('horaFin').innerText = '---';
         }
 
+        // Limpia el mapa y el resumen juntos. Se llama en CADA camino de
+        // error (fechas invalidas, error del backend, fallo de red), no
+        // solo cuando la consulta no encuentra resultados: sin esto, un
+        // error dejaba la ruta de la consulta anterior dibujada, dando la
+        // falsa impresion de que corresponde a la consulta que fallo.
+        function limpiarMapaYResumen() {
+            capaRecorrido.clearLayers();
+            limpiarResumen();
+        }
+
         // ===== Cuarta Parte: dibujar el recorrido =====
         function dibujarRecorrido(puntos) {
             capaRecorrido.clearLayers();
@@ -619,11 +629,13 @@
             const hasta = document.getElementById('hasta').value;
 
             if (!desde || !hasta) {
+                limpiarMapaYResumen();
                 mostrarMensaje('Selecciona la fecha y hora de inicio y de fin.', 'error');
                 return;
             }
 
             if (desde >= hasta) {
+                limpiarMapaYResumen();
                 mostrarMensaje('La fecha inicial debe ser anterior a la final.', 'error');
                 return;
             }
@@ -641,13 +653,13 @@
                 const datos = await respuesta.json();
 
                 if (!respuesta.ok) {
+                    limpiarMapaYResumen();
                     mostrarMensaje(datos.error || 'Error en la consulta.', 'error');
                     return;
                 }
 
                 if (datos.total === 0) {
-                    capaRecorrido.clearLayers();
-                    limpiarResumen();
+                    limpiarMapaYResumen();
                     mostrarMensaje(
                         'No hay registros en ese rango. Prueba con otras fechas.',
                         'info'
@@ -672,6 +684,7 @@
 
             } catch (error) {
                 console.error(error);
+                limpiarMapaYResumen();
                 mostrarMensaje('No se pudo conectar con el servidor.', 'error');
             } finally {
                 boton.disabled = false;
@@ -935,6 +948,7 @@
                 const datos = await respuesta.json();
 
                 if (!respuesta.ok || datos.total === 0) {
+                    limpiarMapaYResumen();
                     mostrarMensaje('No se pudo reconstruir la ruta de esta visita.', 'error');
                     return;
                 }
@@ -955,6 +969,7 @@
                 }
             } catch (error) {
                 console.error(error);
+                limpiarMapaYResumen();
                 mostrarMensaje('No se pudo conectar con el servidor.', 'error');
             }
         }
