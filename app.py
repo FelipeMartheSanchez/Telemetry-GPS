@@ -28,7 +28,7 @@ UTC = ZoneInfo('UTC')
 LIMITE_PUNTOS = 5000
 
 # --- Lugar: radio de busqueda, fijo en el codigo (el usuario no lo elige) ---
-RADIO_LUGAR_METROS = 100
+RADIO_LUGAR_METROS = 200
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
