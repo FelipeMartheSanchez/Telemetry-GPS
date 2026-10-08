@@ -258,7 +258,8 @@
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
             border: 1px solid #e2e8f0;
             padding: 20px 25px;
-            margin-bottom: 25px;
+            /* Ahora el panel va DEBAJO del mapa, por eso el espacio es arriba */
+            margin-top: 25px;
         }
 
         #encabezadoLugar {
@@ -427,6 +428,53 @@
             font-size: 0.82rem;
             color: #94a3b8;
         }
+
+        /* Al tocar una visita se hace scroll hasta el mapa; este margen
+           evita que quede pegado al borde superior de la pantalla. */
+        #map {
+            scroll-margin-top: 12px;
+        }
+
+        /* Texto de ayuda del pin, dentro de los controles de "Por lugar" */
+        .ayuda-pin {
+            width: 100%;
+            text-align: center;
+            font-size: 0.78rem;
+            color: #64748b;
+        }
+
+        /* Pin que el usuario coloca en el mapa (emoji dentro de un divIcon) */
+        .pin-usuario {
+            background: none;
+            border: none;
+            font-size: 30px;
+            line-height: 32px;
+            text-align: center;
+            filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+            cursor: grab;
+        }
+
+        /* Leyenda del tramo resaltado (control de Leaflet, abajo a la izquierda) */
+        .leyenda-tramo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.92);
+            padding: 6px 12px;
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+
+        .leyenda-muestra {
+            display: inline-block;
+            width: 22px;
+            height: 6px;
+            border-radius: 3px;
+            background: #f97316;
+        }
     </style>
 </head>
 <body>
@@ -471,6 +519,7 @@
             <div id="listaSugerencias" class="sugerencias"></div>
         </div>
         <button id="btnBuscarLugar" disabled>Buscar</button>
+        <div class="ayuda-pin">💡 También puedes tocar el mapa para colocar un pin y buscar en ese punto exacto.</div>
     </div>
 
     <div id="mensaje"></div>
@@ -491,13 +540,14 @@
         </div>
     </div>
 
-    <!-- Resultados del modo "Por lugar": nombre del sitio y lista de visitas -->
+    <div id="map"></div>
+
+    <!-- Resultados del modo "Por lugar": nombre del sitio y lista de visitas.
+         Va debajo del mapa; la visita mas reciente aparece primero. -->
     <div id="resultadosLugar">
         <div id="encabezadoLugar"></div>
         <div id="listaVisitas"></div>
     </div>
-
-    <div id="map"></div>
 
     <script>
         // ===== Primera Parte: el mapa =====
@@ -519,6 +569,72 @@
         // dibuje SIN borrar el marcador del lugar: asi el usuario sigue viendo
         // donde queda el sitio con respecto al viaje completo.
         let capaLugar = L.layerGroup().addTo(map);
+
+        // Capa del pin que el usuario coloca con un clic en el mapa (solo en
+        // el modo "Por lugar"). Va aparte para poder quitarlo sin tocar el
+        // marcador del lugar ni la ruta.
+        const capaPin = L.layerGroup().addTo(map);
+
+        // 'fecha' o 'lugar': el clic en el mapa solo coloca pines en 'lugar'.
+        let modoActual = 'fecha';
+
+        // Lugar de la ultima busqueda terminada ({lat, lon, radio}). Se usa
+        // para resaltar, en la ruta de una visita, el tramo que paso por ahi.
+        let ultimoLugar = null;
+
+        // Referencias a los circulos de inicio y fin, para poder traerlos al
+        // frente despues de dibujar el tramo resaltado encima de la ruta.
+        let marcadorInicio = null;
+        let marcadorFin = null;
+
+        const COLOR_TRAMO_LUGAR = '#f97316';
+
+        // Leyenda del tramo resaltado: un control de Leaflet que solo se
+        // agrega al mapa cuando hay tramo resaltado y se quita al limpiar.
+        const leyendaTramo = L.control({ position: 'bottomleft' });
+        leyendaTramo.onAdd = function() {
+            const div = L.DomUtil.create('div', 'leyenda-tramo');
+            div.innerHTML = '<span class="leyenda-muestra"></span><span id="textoLeyendaTramo"></span>';
+            return div;
+        };
+        let leyendaTramoVisible = false;
+
+        function mostrarLeyendaTramo(radioMetros) {
+            if (!leyendaTramoVisible) {
+                leyendaTramo.addTo(map);
+                leyendaTramoVisible = true;
+            }
+            document.getElementById('textoLeyendaTramo').innerText =
+                `Tramo dentro de ${radioMetros} m del lugar`;
+        }
+
+        function quitarLeyendaTramo() {
+            if (leyendaTramoVisible) {
+                leyendaTramo.remove();
+                leyendaTramoVisible = false;
+            }
+        }
+
+        // Unico punto para borrar la ruta del mapa: asi la leyenda del
+        // tramo resaltado nunca queda colgada cuando la ruta desaparece.
+        function limpiarCapaRecorrido() {
+            capaRecorrido.clearLayers();
+            quitarLeyendaTramo();
+            marcadorInicio = null;
+            marcadorFin = null;
+        }
+
+        // Formula de Haversine (la misma de distancia_metros() en app.py):
+        // distancia en metros entre dos coordenadas sobre la esfera terrestre.
+        function distanciaMetros(lat1, lon1, lat2, lon2) {
+            const radioTierra = 6371000;
+            const aRad = grados => grados * Math.PI / 180;
+            const dLat = aRad(lat2 - lat1);
+            const dLon = aRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2 +
+                      Math.cos(aRad(lat1)) * Math.cos(aRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            return 2 * radioTierra * Math.asin(Math.sqrt(a));
+        }
 
         // ===== Segunda Parte: el selector de fecha y hora =====
         // time_24hr: false obliga el formato de 12 horas con a.m./p.m.
@@ -568,20 +684,23 @@
         // error dejaba la ruta de la consulta anterior dibujada, dando la
         // falsa impresion de que corresponde a la consulta que fallo.
         function limpiarMapaYResumen() {
-            capaRecorrido.clearLayers();
+            limpiarCapaRecorrido();
             limpiarResumen();
         }
 
         // ===== Cuarta Parte: dibujar el recorrido =====
         function dibujarRecorrido(puntos) {
-            capaRecorrido.clearLayers();
+            limpiarCapaRecorrido();
 
             const coordenadas = puntos.map(p => [p.lat, p.lon]);
 
+            // bubblingMouseEvents: false evita que un clic sobre la ruta
+            // "atraviese" la linea y coloque un pin en el mapa de abajo.
             L.polyline(coordenadas, {
                 color: '#2563eb',
                 weight: 4,
-                opacity: 0.75
+                opacity: 0.75,
+                bubblingMouseEvents: false
             }).addTo(capaRecorrido);
 
             const inicio = puntos[0];
@@ -590,9 +709,10 @@
             // Circulos de color en lugar de pines, con etiqueta permanente
             // (no hace falta clic para saber cual es cual) y el popup con
             // la hora exacta al hacer clic.
-            L.circleMarker([inicio.lat, inicio.lon], {
+            marcadorInicio = L.circleMarker([inicio.lat, inicio.lon], {
                 radius: 9, color: '#ffffff', weight: 2,
-                fillColor: '#16a34a', fillOpacity: 1
+                fillColor: '#16a34a', fillOpacity: 1,
+                bubblingMouseEvents: false
             }).addTo(capaRecorrido)
               .bindPopup(`<b>Inicio</b><br>${inicio.hora}`)
               .bindTooltip('Inicio', {
@@ -602,9 +722,10 @@
                   className: 'etiqueta-inicio'
               });
 
-            L.circleMarker([fin.lat, fin.lon], {
+            marcadorFin = L.circleMarker([fin.lat, fin.lon], {
                 radius: 9, color: '#ffffff', weight: 2,
-                fillColor: '#dc2626', fillOpacity: 1
+                fillColor: '#dc2626', fillOpacity: 1,
+                bubblingMouseEvents: false
             }).addTo(capaRecorrido)
               .bindPopup(`<b>Fin</b><br>${fin.hora}`)
               .bindTooltip('Fin', {
@@ -621,6 +742,57 @@
                 padding: [40, 40],
                 maxZoom: 17
             });
+        }
+
+        // Resalta, encima de la ruta ya dibujada, los puntos que quedaron
+        // dentro del radio del lugar buscado. No hace otra consulta: usa los
+        // mismos puntos que acaba de dibujar dibujarRecorrido().
+        //
+        // Un tramo es una racha de puntos consecutivos dentro del radio. Como
+        // el GPS reporta cada 10 s, a velocidad de calle una racha puede ser
+        // de un solo punto: ese caso no forma linea, asi que se pinta como un
+        // circulo para que no desaparezca.
+        function resaltarTramoLugar(puntos) {
+            if (!ultimoLugar) return;
+
+            const { lat, lon, radio } = ultimoLugar;
+            const tramos = [];
+            let tramoActual = [];
+
+            puntos.forEach(function(p) {
+                if (distanciaMetros(lat, lon, p.lat, p.lon) <= radio) {
+                    tramoActual.push(p);
+                } else if (tramoActual.length > 0) {
+                    tramos.push(tramoActual);
+                    tramoActual = [];
+                }
+            });
+            if (tramoActual.length > 0) tramos.push(tramoActual);
+
+            if (tramos.length === 0) return;
+
+            tramos.forEach(function(tramo) {
+                if (tramo.length > 1) {
+                    L.polyline(tramo.map(p => [p.lat, p.lon]), {
+                        color: COLOR_TRAMO_LUGAR,
+                        weight: 8,
+                        opacity: 0.95,
+                        bubblingMouseEvents: false
+                    }).addTo(capaRecorrido);
+                } else {
+                    L.circleMarker([tramo[0].lat, tramo[0].lon], {
+                        radius: 7, color: '#ffffff', weight: 2,
+                        fillColor: COLOR_TRAMO_LUGAR, fillOpacity: 1,
+                        bubblingMouseEvents: false
+                    }).addTo(capaRecorrido);
+                }
+            });
+
+            // Los circulos de Inicio y Fin deben quedar por encima del resaltado.
+            if (marcadorInicio) marcadorInicio.bringToFront();
+            if (marcadorFin) marcadorFin.bringToFront();
+
+            mostrarLeyendaTramo(radio);
         }
 
         // ===== Quinta Parte: consulta por fecha =====
@@ -702,9 +874,12 @@
         const resultadosLugar = document.getElementById('resultadosLugar');
 
         function cambiarModo(nuevoModo) {
+            modoActual = nuevoModo;
             ocultarMensaje();
-            capaRecorrido.clearLayers();
+            limpiarCapaRecorrido();
             capaLugar.clearLayers();
+            quitarPin();
+            ultimoLugar = null;
             limpiarResumen();
             resultadosLugar.style.display = 'none';
             inputDireccion.value = '';
@@ -769,6 +944,64 @@
         let indiceResaltado = -1;
         let sugerenciasActuales = [];
 
+        // --- Pin en el mapa ---
+        // Alternativa a escribir una direccion: el usuario toca el mapa y el
+        // pin queda como "lugar seleccionado", con la misma forma que una
+        // sugerencia de Nominatim (lat, lon, display_name), asi que el resto
+        // del flujo (boton Buscar, /api/lugar) no necesita saber la diferencia.
+        let pinMarcador = null;
+
+        const iconoPin = L.divIcon({
+            className: 'pin-usuario',
+            html: '📍',
+            iconSize: [32, 32],
+            iconAnchor: [16, 30]
+        });
+
+        function establecerPin(latlng) {
+            const punto = latlng.wrap();
+            lugarSeleccionado = {
+                lat: punto.lat,
+                lon: punto.lng,
+                display_name: `Punto en el mapa (${punto.lat.toFixed(5)}, ${punto.lng.toFixed(5)})`,
+                esPin: true
+            };
+            inputDireccion.value = lugarSeleccionado.display_name;
+            envolturaInput.classList.add('con-texto');
+            botonLugar.disabled = false;
+            clearTimeout(temporizadorBusqueda);
+            ocultarSugerencias();
+            ocultarMensaje();
+        }
+
+        function colocarPin(latlng) {
+            if (pinMarcador) {
+                pinMarcador.setLatLng(latlng);
+            } else {
+                pinMarcador = L.marker(latlng, {
+                    icon: iconoPin,
+                    draggable: true,
+                    autoPan: true
+                }).addTo(capaPin);
+                // Al soltar el pin despues de arrastrarlo se actualizan las coordenadas.
+                pinMarcador.on('dragend', function() {
+                    establecerPin(pinMarcador.getLatLng());
+                });
+            }
+            establecerPin(latlng);
+        }
+
+        function quitarPin() {
+            capaPin.clearLayers();
+            pinMarcador = null;
+        }
+
+        // Solo en el modo "Por lugar": en "Por fecha" un clic en el mapa no hace nada.
+        map.on('click', function(evento) {
+            if (modoActual !== 'lugar') return;
+            colocarPin(evento.latlng);
+        });
+
         async function buscarSugerencias(texto) {
             const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(texto)}`;
             const respuesta = await fetch(url, { headers: { 'Accept-Language': 'es' } });
@@ -806,6 +1039,8 @@
         }
 
         function seleccionarLugar(lugar) {
+            // Elegir una sugerencia reemplaza al pin: solo hay un lugar activo.
+            quitarPin();
             lugarSeleccionado = lugar;
             inputDireccion.value = lugar.display_name;
             ocultarSugerencias();
@@ -817,6 +1052,8 @@
         inputDireccion.addEventListener('input', function() {
             lugarSeleccionado = null;
             botonLugar.disabled = true;
+            // Si el usuario escribe, el texto ya no corresponde al pin.
+            quitarPin();
 
             const texto = inputDireccion.value.trim();
             envolturaInput.classList.toggle('con-texto', texto.length > 0);
@@ -830,6 +1067,9 @@
             temporizadorBusqueda = setTimeout(async function() {
                 try {
                     const resultados = await buscarSugerencias(texto);
+                    // Si mientras esperabamos a Nominatim el usuario cambio el
+                    // texto o puso un pin, esta respuesta ya no aplica.
+                    if (inputDireccion.value.trim() !== texto) return;
                     mostrarSugerencias(resultados);
                 } catch (error) {
                     console.error(error);
@@ -882,24 +1122,33 @@
             ocultarMensaje();
             resultadosLugar.style.display = 'none';
             capaLugar.clearLayers();
-            capaRecorrido.clearLayers();
+            limpiarCapaRecorrido();
+            quitarPin();
+            ultimoLugar = null;
             limpiarResumen();
             inputDireccion.focus();
         }
 
         btnLimpiarLugar.addEventListener('click', limpiarBusquedaLugar);
 
-        function dibujarLugar(lat, lon, radioMetros, nombre) {
+        function dibujarLugar(lat, lon, radioMetros, nombre, esPin) {
             capaLugar.clearLayers();
 
-            L.marker([lat, lon]).addTo(capaLugar).bindPopup(`<b>${nombre}</b>`);
+            // Si el lugar viene de un pin, el pin ya marca el sitio (y sigue
+            // siendo arrastrable): no se dibuja un segundo marcador encima.
+            if (!esPin) {
+                L.marker([lat, lon]).addTo(capaLugar).bindPopup(`<b>${nombre}</b>`);
+            }
 
+            // interactive: false deja pasar los clics a traves del circulo,
+            // para poder colocar un pin nuevo dentro de la zona buscada.
             L.circle([lat, lon], {
                 radius: radioMetros,
                 color: '#2563eb',
                 weight: 2,
                 fillColor: '#2563eb',
-                fillOpacity: 0.12
+                fillOpacity: 0.12,
+                interactive: false
             }).addTo(capaLugar);
 
             map.setView([lat, lon], 16);
@@ -917,7 +1166,14 @@
                 return;
             }
 
-            visitas.forEach(function(visita) {
+            // El backend las entrega de la mas antigua a la mas reciente; aqui
+            // se muestran al reves. entrada_iso (AAAA-MM-DDTHH:MM:SS) se puede
+            // ordenar como texto porque el formato es de ancho fijo.
+            const ordenadas = visitas.slice().sort(
+                (a, b) => b.entrada_iso.localeCompare(a.entrada_iso)
+            );
+
+            ordenadas.forEach(function(visita) {
                 const item = document.createElement('div');
                 item.className = 'visita-item';
                 item.innerHTML = `
@@ -925,6 +1181,12 @@
                     <span class="visita-detalle">${visita.puntos} punto(s)</span>
                 `;
                 item.addEventListener('click', function() {
+                    // La lista esta debajo del mapa: se sube hasta el mapa para
+                    // que el usuario vea la ruta que se va a dibujar.
+                    document.getElementById('map').scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
                     verRutaDeVisita(visita);
                 });
                 listaVisitas.appendChild(item);
@@ -954,6 +1216,8 @@
                 }
 
                 dibujarRecorrido(datos.puntos);
+                // Pinta con otro color el tramo que paso por el lugar buscado.
+                resaltarTramoLugar(datos.puntos);
 
                 document.getElementById('totalPuntos').innerText = datos.total;
                 document.getElementById('horaInicio').innerText = datos.puntos[0].hora;
@@ -987,7 +1251,8 @@
             ocultarMensaje();
             resultadosLugar.style.display = 'none';
             capaLugar.clearLayers();
-            capaRecorrido.clearLayers();
+            limpiarCapaRecorrido();
+            ultimoLugar = null;
             limpiarResumen();
 
             try {
@@ -1002,11 +1267,21 @@
                     return;
                 }
 
-                dibujarLugar(lat, lon, datos.radio_metros, lugar.display_name);
+                ultimoLugar = { lat: lat, lon: lon, radio: datos.radio_metros };
+
+                dibujarLugar(lat, lon, datos.radio_metros, lugar.display_name, Boolean(lugar.esPin));
                 mostrarVisitas(datos.visitas, lugar.display_name, datos.radio_metros);
 
                 if (datos.total_visitas === 0) {
                     mostrarMensaje('El vehículo no registró visitas a este lugar.', 'info');
+                } else {
+                    // La lista queda debajo del mapa: se avisa para que el
+                    // usuario sepa donde buscarla.
+                    mostrarMensaje(
+                        `Se encontraron ${datos.total_visitas} visita(s), de la más reciente a la más antigua. ` +
+                        'La lista está debajo del mapa; toca una para ver su ruta.',
+                        'info'
+                    );
                 }
 
             } catch (error) {
