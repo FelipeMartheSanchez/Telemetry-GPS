@@ -475,6 +475,30 @@
             border-radius: 3px;
             background: #c026d3;
         }
+
+        /* Campos de fecha OPCIONALES del modo "Por lugar": llevan un boton
+           "x" para vaciarlos, igual que el campo de direccion. */
+        .envoltura-fecha {
+            position: relative;
+            width: 230px;
+        }
+
+        .envoltura-fecha input:not([type="hidden"]) {
+            display: block;
+            padding-right: 34px;
+        }
+
+        /* El boton solo se muestra cuando el campo tiene una fecha */
+        .envoltura-fecha.con-valor .btn-limpiar {
+            display: block;
+        }
+
+        /* "(opcional)" dentro de la etiqueta: sin mayusculas ni negrita */
+        .campo label .opcional {
+            text-transform: none;
+            font-weight: 500;
+            color: #94a3b8;
+        }
     </style>
 </head>
 <body>
@@ -517,6 +541,22 @@
             </div>
             <!-- Lista desplegable de sugerencias, estilo Google Maps -->
             <div id="listaSugerencias" class="sugerencias"></div>
+        </div>
+        <!-- Rango de fechas OPCIONAL: se puede buscar solo por lugar, o limitar
+             las visitas a un rango (solo desde, solo hasta, o ambos). -->
+        <div class="campo">
+            <label for="desdeLugar">Desde <span class="opcional">(opcional)</span></label>
+            <div class="envoltura-fecha">
+                <input type="text" id="desdeLugar" placeholder="Cualquier fecha">
+                <button type="button" id="btnLimpiarDesdeLugar" class="btn-limpiar" title="Quitar fecha">&times;</button>
+            </div>
+        </div>
+        <div class="campo">
+            <label for="hastaLugar">Hasta <span class="opcional">(opcional)</span></label>
+            <div class="envoltura-fecha">
+                <input type="text" id="hastaLugar" placeholder="Cualquier fecha">
+                <button type="button" id="btnLimpiarHastaLugar" class="btn-limpiar" title="Quitar fecha">&times;</button>
+            </div>
         </div>
         <button id="btnBuscarLugar" disabled>Buscar</button>
         <div class="ayuda-pin">💡 También puedes tocar el mapa para colocar un pin y buscar en ese punto exacto.</div>
@@ -587,7 +627,7 @@
         let marcadorInicio = null;
         let marcadorFin = null;
 
-        const COLOR_TRAMO_LUGAR = '#c026d3  ';
+        const COLOR_TRAMO_LUGAR = '#c026d3';
 
         // Leyenda del tramo resaltado: un control de Leaflet que solo se
         // agrega al mapa cuando hay tramo resaltado y se quita al limpiar.
@@ -657,6 +697,25 @@
 
         const pickerDesde = flatpickr("#desde", configFecha);
         const pickerHasta = flatpickr("#hasta", configFecha);
+
+        // Selectores del modo "Por lugar": misma configuracion (12 horas,
+        // AM/PM, hora de Colombia) pero OPCIONALES. Ademas de ocultar el
+        // mensaje, onChange muestra u oculta el boton "x" segun haya fecha.
+        const configFechaLugar = Object.assign({}, configFecha, {
+            onChange: function(fechasElegidas, texto, instancia) {
+                ocultarMensaje();
+                const envoltura = instancia.input.closest('.envoltura-fecha');
+                envoltura.classList.toggle('con-valor', fechasElegidas.length > 0);
+            }
+        });
+
+        const pickerDesdeLugar = flatpickr("#desdeLugar", configFechaLugar);
+        const pickerHastaLugar = flatpickr("#hastaLugar", configFechaLugar);
+
+        document.getElementById('btnLimpiarDesdeLugar')
+            .addEventListener('click', () => pickerDesdeLugar.clear());
+        document.getElementById('btnLimpiarHastaLugar')
+            .addEventListener('click', () => pickerHastaLugar.clear());
 
         // ===== Tercera Parte: utilidades =====
         const mensaje = document.getElementById('mensaje');
@@ -882,6 +941,9 @@
             ultimoLugar = null;
             limpiarResumen();
             resultadosLugar.style.display = 'none';
+            // Al cambiar de modo tambien se vacia el rango opcional de "Por lugar".
+            pickerDesdeLugar.clear();
+            pickerHastaLugar.clear();
             inputDireccion.value = '';
             lugarSeleccionado = null;
             botonLugar.disabled = true;
@@ -1154,15 +1216,21 @@
             map.setView([lat, lon], 16);
         }
 
-        function mostrarVisitas(visitas, nombreLugar, radioMetros) {
+        // textoFiltro describe el rango de fechas aplicado ('' si no hay).
+        function mostrarVisitas(visitas, nombreLugar, radioMetros, textoFiltro) {
             resultadosLugar.style.display = 'block';
+            const lineaFiltro = textoFiltro
+                ? `<br><span class="radio-info">🗓️ ${textoFiltro}</span>`
+                : '';
             encabezadoLugar.innerHTML =
-                `📍 ${nombreLugar}<br><span class="radio-info">Radio de búsqueda: ${radioMetros} metros</span>`;
+                `📍 ${nombreLugar}<br><span class="radio-info">Radio de búsqueda: ${radioMetros} metros</span>${lineaFiltro}`;
 
             listaVisitas.innerHTML = '';
 
             if (visitas.length === 0) {
-                listaVisitas.innerHTML = '<div class="visita-vacia">No se encontraron visitas a este lugar.</div>';
+                listaVisitas.innerHTML = textoFiltro
+                    ? '<div class="visita-vacia">No se encontraron visitas a este lugar en ese rango de fechas.</div>'
+                    : '<div class="visita-vacia">No se encontraron visitas a este lugar.</div>';
                 return;
             }
 
@@ -1238,6 +1306,17 @@
             }
         }
 
+        // Texto legible del rango elegido, tomado de lo que el usuario VE en
+        // los campos (formato dd/mm/aaaa hh:mm AM/PM). Vacio si no hay rango.
+        function describirFiltro(desde, hasta) {
+            const textoDesde = pickerDesdeLugar.altInput.value;
+            const textoHasta = pickerHastaLugar.altInput.value;
+            if (desde && hasta) return `Entre ${textoDesde} y ${textoHasta}`;
+            if (desde) return `Desde ${textoDesde}`;
+            if (hasta) return `Hasta ${textoHasta}`;
+            return '';
+        }
+
         async function buscarPorLugar() {
             if (!lugarSeleccionado) {
                 mostrarMensaje('Selecciona un lugar de la lista de sugerencias.', 'error');
@@ -1245,6 +1324,26 @@
             }
 
             const lugar = lugarSeleccionado;
+
+            // Rango opcional: cualquiera de los dos puede estar vacio.
+            const desde = document.getElementById('desdeLugar').value;
+            const hasta = document.getElementById('hastaLugar').value;
+
+            if (desde && hasta && desde >= hasta) {
+                // Igual que en "Por fecha": se avisa sin gastar una peticion y
+                // se limpia lo anterior para que no parezca de esta consulta.
+                resultadosLugar.style.display = 'none';
+                capaLugar.clearLayers();
+                ultimoLugar = null;
+                limpiarMapaYResumen();
+                mostrarMensaje('La fecha inicial debe ser anterior a la final.', 'error');
+                return;
+            }
+
+            let parametrosFecha = '';
+            if (desde) parametrosFecha += `&desde=${desde.replace(' ', 'T')}`;
+            if (hasta) parametrosFecha += `&hasta=${hasta.replace(' ', 'T')}`;
+            const textoFiltro = describirFiltro(desde, hasta);
 
             botonLugar.disabled = true;
             botonLugar.innerText = 'Buscando...';
@@ -1259,7 +1358,7 @@
                 const lat = parseFloat(lugar.lat);
                 const lon = parseFloat(lugar.lon);
 
-                const respuesta = await fetch(`/api/lugar?lat=${lat}&lon=${lon}`);
+                const respuesta = await fetch(`/api/lugar?lat=${lat}&lon=${lon}${parametrosFecha}`);
                 const datos = await respuesta.json();
 
                 if (!respuesta.ok) {
@@ -1270,15 +1369,17 @@
                 ultimoLugar = { lat: lat, lon: lon, radio: datos.radio_metros };
 
                 dibujarLugar(lat, lon, datos.radio_metros, lugar.display_name, Boolean(lugar.esPin));
-                mostrarVisitas(datos.visitas, lugar.display_name, datos.radio_metros);
+                mostrarVisitas(datos.visitas, lugar.display_name, datos.radio_metros, textoFiltro);
+
+                const enRango = textoFiltro ? ' en el rango seleccionado' : '';
 
                 if (datos.total_visitas === 0) {
-                    mostrarMensaje('El vehículo no registró visitas a este lugar.', 'info');
+                    mostrarMensaje(`El vehículo no registró visitas a este lugar${enRango}.`, 'info');
                 } else {
                     // La lista queda debajo del mapa: se avisa para que el
                     // usuario sepa donde buscarla.
                     mostrarMensaje(
-                        `Se encontraron ${datos.total_visitas} visita(s), de la más reciente a la más antigua. ` +
+                        `Se encontraron ${datos.total_visitas} visita(s)${enRango}, de la más reciente a la más antigua. ` +
                         'La lista está debajo del mapa; toca una para ver su ruta.',
                         'info'
                     );

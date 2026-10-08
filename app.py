@@ -234,21 +234,38 @@ def buscar_viaje_de_visita(entrada_utc, salida_utc):
     return fila
 
 # --- Lugar: agrupa los puntos cercanos en "visitas" ---
-def encontrar_visitas(lat_lugar, lon_lugar):
-    """Recorre todo el historial de ubicaciones en orden cronologico y agrupa
+def encontrar_visitas(lat_lugar, lon_lugar, desde_utc=None, hasta_utc=None):
+    """Recorre el historial de ubicaciones en orden cronologico y agrupa
     los puntos consecutivos que caen dentro de RADIO_LUGAR_METROS en una
     sola "visita" (hora de entrada, hora de salida), en vez de devolver cada
     punto suelto. Por cada visita, busca ademas el viaje completo (tabla
     viajes) que la contiene, para que el frontend pueda dibujar la ruta
     entera del viaje al hacer clic, no solo el tramo cercano al lugar.
+
+    desde_utc y hasta_utc son opcionales (texto UTC, como los devuelve a_utc).
+    Si vienen, solo se consideran los puntos guardados dentro de ese rango;
+    si no vienen, se recorre todo el historial. Una visita que empezo antes
+    del rango o terminaba despues aparece recortada a los puntos del rango.
     """
+    # Las condiciones se arman solo con fragmentos fijos de SQL; los valores
+    # de fecha viajan aparte como parametros (%s), nunca pegados al texto.
+    condiciones = []
+    parametros = []
+    if desde_utc:
+        condiciones.append("fecha_registro >= %s")
+        parametros.append(desde_utc)
+    if hasta_utc:
+        condiciones.append("fecha_registro <= %s")
+        parametros.append(hasta_utc)
+
+    consulta = "SELECT latitud, longitud, fecha_registro FROM ubicaciones"
+    if condiciones:
+        consulta += " WHERE " + " AND ".join(condiciones)
+    consulta += " ORDER BY fecha_registro ASC"
+
     conexion = conectar_mysql()
     cursor = conexion.cursor(dictionary=True)
-    cursor.execute("""
-        SELECT latitud, longitud, fecha_registro
-        FROM ubicaciones
-        ORDER BY fecha_registro ASC
-    """)
+    cursor.execute(consulta, parametros)
     filas = cursor.fetchall()
     cursor.close()
     conexion.close()
@@ -370,8 +387,26 @@ def api_lugar():
     except ValueError:
         return jsonify({'error': 'lat y lon deben ser numeros validos'}), 400
 
+    # Rango de fechas OPCIONAL: puede venir solo desde, solo hasta, ambos o
+    # ninguno. Llegan en hora de Colombia, igual que en /api/historial.
+    desde = request.args.get('desde')
+    hasta = request.args.get('hasta')
+    desde_utc = None
+    hasta_utc = None
+
     try:
-        visitas = encontrar_visitas(lat_lugar, lon_lugar)
+        if desde:
+            desde_utc = a_utc(desde)
+        if hasta:
+            hasta_utc = a_utc(hasta)
+    except ValueError:
+        return jsonify({'error': 'Formato de fecha invalido'}), 400
+
+    if desde_utc and hasta_utc and desde_utc >= hasta_utc:
+        return jsonify({'error': 'La fecha inicial debe ser anterior a la final'}), 400
+
+    try:
+        visitas = encontrar_visitas(lat_lugar, lon_lugar, desde_utc, hasta_utc)
     except Exception as error:
         print(f"Error consultando el lugar: {error}")
         return jsonify({'error': 'No se pudo consultar la base de datos'}), 500
