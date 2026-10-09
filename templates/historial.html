@@ -476,6 +476,42 @@
             background: #c026d3;
         }
 
+        /* Leyenda de viajes (modo "Por fecha"): una ficha por viaje, con el
+           color con el que se dibuja en el mapa. El texto va en tinta normal;
+           solo la muestra lleva el color del viaje. */
+        .leyenda-viajes {
+            display: none;
+            flex-wrap: wrap;
+            gap: 8px 10px;
+            max-width: 900px;
+            width: 100%;
+            margin-top: 12px;
+            padding: 10px 14px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        .ficha-viaje {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            color: #1e293b;
+        }
+
+        .muestra-viaje {
+            display: inline-block;
+            flex: none;
+            width: 22px;
+            height: 6px;
+            border-radius: 3px;
+        }
+
         /* Campos de fecha OPCIONALES del modo "Por lugar": llevan un boton
            "x" para vaciarlos, igual que el campo de direccion. */
         .envoltura-fecha {
@@ -698,6 +734,10 @@
 
     <div id="map"></div>
 
+    <!-- Leyenda de viajes: solo se muestra en "Por fecha" cuando la consulta
+         incluye viajes registrados (tabla viajes). Una ficha por viaje. -->
+    <div id="leyendaViajes" class="leyenda-viajes" role="list" aria-label="Viajes de la ruta"></div>
+
     <!-- Barra de animacion: aparece al dibujar una ruta. La animacion arranca
          sola; mover el slider la pausa para recorrer la ruta a mano. -->
     <div id="barraAnimacion" class="barra-animacion">
@@ -780,6 +820,25 @@
 
         const COLOR_TRAMO_LUGAR = '#c026d3';
 
+        // ===== Segmentacion de la ruta por viaje (modo "Por fecha") =====
+        // Cada viaje de la tabla viajes se dibuja con un color propio. Los
+        // colores van en orden fijo (el viaje 1 siempre azul, el 2 siempre
+        // naranja...) y NO se reciclan: del noveno viaje en adelante todos
+        // comparten un solo color ("Otros viajes"), porque repetir uno de los
+        // 8 haria creer que son el mismo viaje. Paleta validada para
+        // daltonismo y contraste (dataviz/validate_palette.js).
+        const PALETA_VIAJES = [
+            '#2563eb', '#ea580c', '#0d9488', '#9333ea',
+            '#a16207', '#db2777', '#4d7c0f', '#0891b2'
+        ];
+        const COLOR_RUTA_UNICA = '#2563eb';    // ruta sin viajes (Por lugar, o sin marcas)
+        const COLOR_SIN_VIAJE = '#94a3b8';     // puntos fuera de todo viaje
+        const COLOR_OTROS_VIAJES = '#334155';  // viajes del 9 en adelante
+
+        // id de viaje -> { numero, color, etiqueta }, para el hover y la leyenda
+        let infoViajes = new Map();
+        const leyendaViajes = document.getElementById('leyendaViajes');
+
         // Leyenda del tramo resaltado: un control de Leaflet que solo se
         // agrega al mapa cuando hay tramo resaltado y se quita al limpiar.
         const leyendaTramo = L.control({ position: 'bottomleft' });
@@ -811,6 +870,7 @@
         function limpiarCapaRecorrido() {
             capaRecorrido.clearLayers();
             quitarLeyendaTramo();
+            ocultarLeyendaViajes();
             marcadorInicio = null;
             marcadorFin = null;
 
@@ -824,6 +884,79 @@
             marcadorAnimacion = null;
             ultimoLatLngHover = null;
             cachePixeles = null;
+        }
+
+        function colorDeViaje(indice) {
+            return indice < PALETA_VIAJES.length ? PALETA_VIAJES[indice] : COLOR_OTROS_VIAJES;
+        }
+
+        // Parte la ruta en tramos de puntos consecutivos con el mismo viaje.
+        // Cada tramo nuevo repite el ultimo punto del anterior, asi no queda
+        // un hueco entre colores: la linea de union toma el color del tramo
+        // que empieza.
+        function segmentarPorViaje(puntos) {
+            const segmentos = [];
+            let actual = null;
+            puntos.forEach(function(p) {
+                const id = (p.viaje_id === undefined) ? null : p.viaje_id;
+                if (!actual || actual.viajeId !== id) {
+                    const nuevo = { viajeId: id, puntos: [] };
+                    if (actual) nuevo.puntos.push(actual.puntos[actual.puntos.length - 1]);
+                    segmentos.push(nuevo);
+                    actual = nuevo;
+                }
+                actual.puntos.push(p);
+            });
+            return segmentos;
+        }
+
+        // '01/10/2026 09:59:00 AM' -> { dia: '01/10', hora: '9:59 AM' }
+        function partesFecha(texto) {
+            const m = /^(\d{2})\/(\d{2})\/\d{4} (\d{1,2}):(\d{2}):\d{2}\s*(\S+)$/.exec(texto || '');
+            if (!m) return { dia: '', hora: texto || '' };
+            return { dia: `${m[1]}/${m[2]}`, hora: `${Number(m[3])}:${m[4]} ${m[5]}` };
+        }
+
+        // "Viaje 2 · 02/10 9:59 AM → sin cierre"
+        function etiquetaViaje(numero, viaje) {
+            const ini = partesFecha(viaje.inicio);
+            let texto = `Viaje ${numero} · ${ini.dia} ${ini.hora}`;
+            if (viaje.sin_cierre || !viaje.fin) {
+                return texto + ' → sin cierre';
+            }
+            const fin = partesFecha(viaje.fin);
+            return texto + ' → ' + (fin.dia === ini.dia ? fin.hora : `${fin.dia} ${fin.hora}`);
+        }
+
+        function agregarFicha(color, texto) {
+            const ficha = document.createElement('span');
+            ficha.className = 'ficha-viaje';
+            ficha.setAttribute('role', 'listitem');
+            const muestra = document.createElement('span');
+            muestra.className = 'muestra-viaje';
+            muestra.style.background = color;
+            const etiqueta = document.createElement('span');
+            etiqueta.textContent = texto;
+            ficha.appendChild(muestra);
+            ficha.appendChild(etiqueta);
+            leyendaViajes.appendChild(ficha);
+        }
+
+        function mostrarLeyendaViajes(viajes, haySinViaje) {
+            leyendaViajes.replaceChildren();
+            viajes.forEach(function(v, i) {
+                if (i < PALETA_VIAJES.length) agregarFicha(colorDeViaje(i), infoViajes.get(v.id).etiqueta);
+            });
+            const extra = viajes.length - PALETA_VIAJES.length;
+            if (extra > 0) agregarFicha(COLOR_OTROS_VIAJES, `Otros ${extra} viajes`);
+            if (haySinViaje) agregarFicha(COLOR_SIN_VIAJE, 'Sin viaje registrado');
+            leyendaViajes.style.display = 'flex';
+        }
+
+        function ocultarLeyendaViajes() {
+            leyendaViajes.replaceChildren();
+            leyendaViajes.style.display = 'none';
+            infoViajes = new Map();
         }
 
         // Formula de Haversine (la misma de distancia_metros() en app.py):
@@ -964,11 +1097,14 @@
             const p = puntosActuales[indice];
             if (!p) return;
 
-            const contenido = `<b>${p.hora}</b><br>${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
+            const viaje = (p.viaje_id !== undefined && p.viaje_id !== null) ? infoViajes.get(p.viaje_id) : null;
+            let contenido = `<b>${p.hora}</b><br>${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
+            if (viaje) contenido += `<br>Viaje ${viaje.numero}`;
+            const colorBorde = viaje ? viaje.color : COLOR_RUTA_UNICA;
 
             if (!marcadorHover) {
                 marcadorHover = L.circleMarker([p.lat, p.lon], {
-                    radius: 7, color: '#2563eb', weight: 3,
+                    radius: 7, color: colorBorde, weight: 3,
                     fillColor: '#ffffff', fillOpacity: 1,
                     interactive: false,
                     bubblingMouseEvents: false
@@ -981,6 +1117,7 @@
                   });
             } else {
                 marcadorHover.setLatLng([p.lat, p.lon]);
+                marcadorHover.setStyle({ color: colorBorde });
                 marcadorHover.setTooltipContent(contenido);
             }
         }
@@ -1199,23 +1336,52 @@
         });
 
         // ===== Cuarta Parte: dibujar el recorrido =====
-        function dibujarRecorrido(puntos) {
+        // viajes (opcional): lista de /api/historial. Si viene con elementos,
+        // la ruta se pinta un color por viaje; si no (modo "Por lugar" o sin
+        // marcas de viaje), se pinta de un solo color como siempre.
+        function dibujarRecorrido(puntos, viajes) {
             limpiarCapaRecorrido();
             puntosActuales = puntos;
+            viajes = viajes || [];
 
             const coordenadas = puntos.map(p => [p.lat, p.lon]);
 
             // interactive: false: este trazo solo se ve. Quien recibe el mouse
-            // es la polilinea invisible de crearLineaHover(). Ademas,
-            // bubblingMouseEvents: false evita que un clic sobre la ruta
-            // "atraviese" la linea y coloque un pin en el mapa de abajo.
-            L.polyline(coordenadas, {
-                color: '#2563eb',
-                weight: 4,
-                opacity: 0.75,
-                interactive: false,
-                bubblingMouseEvents: false
-            }).addTo(capaRecorrido);
+            // es la polilinea invisible de crearLineaHover() (una sola, sobre
+            // toda la ruta). Ademas, bubblingMouseEvents: false evita que un
+            // clic sobre la ruta "atraviese" la linea y coloque un pin.
+            const estiloTrazo = { weight: 4, opacity: 0.8, interactive: false, bubblingMouseEvents: false };
+
+            if (viajes.length === 0) {
+                L.polyline(coordenadas, Object.assign({ color: COLOR_RUTA_UNICA }, estiloTrazo))
+                    .addTo(capaRecorrido);
+            } else {
+                viajes.forEach(function(v, i) {
+                    infoViajes.set(v.id, {
+                        numero: i + 1,
+                        color: colorDeViaje(i),
+                        etiqueta: etiquetaViaje(i + 1, v)
+                    });
+                });
+                let haySinViaje = false;
+                segmentarPorViaje(puntos).forEach(function(seg) {
+                    const info = (seg.viajeId === null) ? null : infoViajes.get(seg.viajeId);
+                    const color = info ? info.color : COLOR_SIN_VIAJE;
+                    if (!info) haySinViaje = true;
+                    if (seg.puntos.length > 1) {
+                        L.polyline(seg.puntos.map(p => [p.lat, p.lon]),
+                                   Object.assign({ color: color }, estiloTrazo)).addTo(capaRecorrido);
+                    } else {
+                        // Un tramo de un solo punto no forma linea: se dibuja un circulo.
+                        L.circleMarker([seg.puntos[0].lat, seg.puntos[0].lon], {
+                            radius: 5, color: '#ffffff', weight: 1,
+                            fillColor: color, fillOpacity: 1,
+                            interactive: false, bubblingMouseEvents: false
+                        }).addTo(capaRecorrido);
+                    }
+                });
+                mostrarLeyendaViajes(viajes, haySinViaje);
+            }
 
             crearLineaHover(coordenadas);
 
@@ -1365,7 +1531,7 @@
                     return;
                 }
 
-                dibujarRecorrido(datos.puntos);
+                dibujarRecorrido(datos.puntos, datos.viajes);
 
                 document.getElementById('totalPuntos').innerText = datos.total;
                 document.getElementById('horaInicio').innerText = datos.puntos[0].hora;

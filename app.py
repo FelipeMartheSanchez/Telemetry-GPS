@@ -2,7 +2,7 @@ import os
 import math
 import socket
 import mysql.connector
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify
@@ -26,6 +26,9 @@ WEB_PORT = int(os.getenv('WEB_PORT', '80'))
 BOGOTA = ZoneInfo('America/Bogota')
 UTC = ZoneInfo('UTC')
 LIMITE_PUNTOS = 5000
+# Margen despues de FIN_RECORRIDO para aceptar el ultimo punto del viaje
+# (el telefono puede enviar un punto justo despues de la marca de fin).
+TOLERANCIA_FIN_VIAJE = timedelta(seconds=15)
 
 # --- Lugar: radio de busqueda, fijo en el codigo (el usuario no lo elige) ---
 RADIO_LUGAR_METROS = 200
@@ -158,12 +161,58 @@ def a_utc(texto):
     local = datetime.fromisoformat(texto).replace(tzinfo=BOGOTA)
     return local.astimezone(UTC).strftime('%Y-%m-%d %H:%M:%S')
 
+# --- Historico: asignar cada punto a un viaje ---
+def asignar_viajes(filas, viajes):
+    """Devuelve, para cada fila, el id del viaje al que pertenece (o None).
+
+    filas:  lista de dicts con 'fecha_registro' (UTC), ordenada ascendente.
+    viajes: lista de dicts {'id','inicio','fin'} (UTC), ordenada por inicio.
+            'fin' puede ser None si el viaje nunca se cerro.
+
+    Un punto pertenece al ultimo viaje que empezo antes que el, siempre que
+    no haya terminado. El "fin efectivo" de un viaje es, en orden:
+      1) su fin real,
+      2) el inicio del siguiente viaje (si nunca se cerro),
+      3) el ultimo punto consultado (si es el ultimo y sigue abierto).
+    Los puntos fuera de todo viaje quedan en None (tramo "sin viaje").
+    """
+    if not viajes:
+        return [None] * len(filas)
+
+    ultimo_instante = filas[-1]['fecha_registro'] if filas else None
+    efectivos = []
+    for i, viaje in enumerate(viajes):
+        if viaje['fin'] is not None:
+            efectivos.append(viaje['fin'])
+        elif i + 1 < len(viajes):
+            efectivos.append(viajes[i + 1]['inicio'])
+        else:
+            efectivos.append(ultimo_instante)
+
+    ids = []
+    j = -1
+    for fila in filas:
+        t = fila['fecha_registro']
+        while j + 1 < len(viajes) and viajes[j + 1]['inicio'] <= t:
+            j += 1
+        if j >= 0 and (efectivos[j] is None or t <= efectivos[j] + TOLERANCIA_FIN_VIAJE):
+            ids.append(viajes[j]['id'])
+        else:
+            ids.append(None)
+    return ids
+
+def formatear_marca(marca_utc):
+    """datetime UTC sin zona -> texto en hora de Colombia."""
+    marca = marca_utc.replace(tzinfo=UTC).astimezone(BOGOTA)
+    return marca.strftime('%d/%m/%Y %I:%M:%S %p')
+
 # --- Historico: consulta de la ventana de tiempo ---
 def consultar_historial(desde_utc, hasta_utc):
-    """Devuelve los puntos guardados entre dos instantes, en orden cronologico.
+    """Devuelve (puntos, viajes) entre dos instantes, en orden cronologico.
 
     Se filtra por fecha_registro (timestamp) y no por fecha/hora_col, porque
     esas dos son varchar y no se pueden comparar ni ordenar correctamente.
+    Cada punto lleva 'viaje_id' (None si no cae dentro de ningun viaje).
     """
     conexion = conectar_mysql()
     cursor = conexion.cursor(dictionary=True)
@@ -176,20 +225,52 @@ def consultar_historial(desde_utc, hasta_utc):
     """
     cursor.execute(consulta, (desde_utc, hasta_utc, LIMITE_PUNTOS))
     filas = cursor.fetchall()
+
+    # Viajes que se solapan con la ventana. Si la tabla no existe o falla,
+    # el historial sigue funcionando (todo se dibuja como un solo recorrido).
+    viajes_db = []
+    try:
+        cursor.execute(
+            """
+            SELECT id, inicio, fin
+            FROM viajes
+            WHERE inicio <= %s AND (fin IS NULL OR fin >= %s)
+            ORDER BY inicio ASC
+            """,
+            (hasta_utc, desde_utc)
+        )
+        viajes_db = cursor.fetchall()
+    except Exception as error:
+        print(f"Aviso: no se pudo leer la tabla viajes: {error}")
+        viajes_db = []
     cursor.close()
     conexion.close()
 
+    ids = asignar_viajes(filas, viajes_db)
+
     puntos = []
-    for fila in filas:
+    for fila, viaje_id in zip(filas, ids):
         # fecha_registro sale de MySQL en UTC y sin zona: se la marcamos
         # y la traducimos a hora de Colombia para mostrarla.
-        marca = fila['fecha_registro'].replace(tzinfo=UTC).astimezone(BOGOTA)
         puntos.append({
             'lat': float(fila['latitud']),
             'lon': float(fila['longitud']),
-            'hora': marca.strftime('%d/%m/%Y %I:%M:%S %p')
+            'hora': formatear_marca(fila['fecha_registro']),
+            'viaje_id': viaje_id
         })
-    return puntos
+
+    # Solo se informan los viajes que realmente tienen puntos en la consulta.
+    usados = set(ids)
+    viajes = []
+    for viaje in viajes_db:
+        if viaje['id'] in usados:
+            viajes.append({
+                'id': viaje['id'],
+                'inicio': formatear_marca(viaje['inicio']),
+                'fin': formatear_marca(viaje['fin']) if viaje['fin'] else None,
+                'sin_cierre': viaje['fin'] is None
+            })
+    return puntos, viajes
 
 # --- Lugar: distancia entre dos coordenadas (formula de Haversine) ---
 def distancia_metros(lat1, lon1, lat2, lon2):
@@ -361,13 +442,14 @@ def api_historial():
         return jsonify({'error': 'La fecha inicial debe ser anterior a la final'}), 400
 
     try:
-        puntos = consultar_historial(desde_utc, hasta_utc)
+        puntos, viajes = consultar_historial(desde_utc, hasta_utc)
     except Exception as error:
         print(f"Error consultando el historial: {error}")
         return jsonify({'error': 'No se pudo consultar la base de datos'}), 500
 
     return jsonify({
         'puntos': puntos,
+        'viajes': viajes,
         'total': len(puntos),
         'truncado': len(puntos) >= LIMITE_PUNTOS
     })
