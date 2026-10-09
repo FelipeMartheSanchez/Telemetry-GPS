@@ -551,6 +551,70 @@
         #map.pin-activo .leaflet-interactive {
             cursor: crosshair !important;
         }
+
+        /* Etiqueta del punto de la ruta bajo el cursor (o tocado) */
+        .etiqueta-punto {
+            font-family: 'Poppins', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 500;
+            line-height: 1.4;
+            text-align: center;
+            padding: 6px 10px;
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            color: #0f172a;
+        }
+
+        /* Barra de animacion de la ruta: va justo debajo del mapa. Los
+           elementos se acomodan en varias filas si la pantalla es angosta. */
+        .barra-animacion {
+            display: none;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px 14px;
+            max-width: 900px;
+            width: 100%;
+            margin-top: 12px;
+            padding: 12px 20px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        }
+
+        .btn-animacion {
+            min-width: 130px;
+            padding: 8px 18px;
+            border: none;
+            border-radius: 50px;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 0.85rem;
+            font-weight: 600;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .btn-animacion:hover {
+            background: #1d4ed8;
+        }
+
+        #sliderRuta {
+            flex: 1 1 180px;
+            min-width: 0;
+            accent-color: #2563eb;
+            cursor: pointer;
+        }
+
+        .etiqueta-animacion {
+            flex: 1 1 100%;
+            text-align: center;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: #475569;
+        }
     </style>
 </head>
 <body>
@@ -634,6 +698,15 @@
 
     <div id="map"></div>
 
+    <!-- Barra de animacion: aparece al dibujar una ruta. La animacion arranca
+         sola; mover el slider la pausa para recorrer la ruta a mano. -->
+    <div id="barraAnimacion" class="barra-animacion">
+        <button type="button" id="btnAnimacion" class="btn-animacion">⏸ Pausar</button>
+        <input type="range" id="sliderRuta" min="0" max="0" step="1" value="0"
+               aria-label="Posición en la ruta">
+        <span id="etiquetaAnimacion" class="etiqueta-animacion"></span>
+    </div>
+
     <!-- Resultados del modo "Por lugar": nombre del sitio y lista de visitas.
          Va debajo del mapa; la visita mas reciente aparece primero. -->
     <div id="resultadosLugar">
@@ -679,6 +752,32 @@
         let marcadorInicio = null;
         let marcadorFin = null;
 
+        // --- Ruta actual: puntos, punto bajo el cursor y animacion ---
+        // puntosActuales es LA lista de puntos de la ruta dibujada, en orden.
+        // La llena dibujarRecorrido() (la unica funcion que dibuja rutas), asi
+        // que el punto bajo el cursor y la animacion funcionan igual en
+        // "Por fecha" y en "Por lugar". limpiarCapaRecorrido() la vacia.
+        let puntosActuales = [];
+        let lineaHover = null;         // polilinea invisible y gruesa que recibe el mouse
+        let marcadorHover = null;      // circulo del punto bajo el cursor (o tocado)
+        let marcadorAnimacion = null;  // circulo amarillo que recorre la ruta
+        let hoverPendiente = false;
+        let ultimoLatLngHover = null;
+        let cachePixeles = null;       // puntos de la ruta ya proyectados a pixeles (ver indiceMasCercano)
+
+        const barraAnimacion = document.getElementById('barraAnimacion');
+        const botonAnimacion = document.getElementById('btnAnimacion');
+        const sliderRuta = document.getElementById('sliderRuta');
+        const etiquetaAnimacion = document.getElementById('etiquetaAnimacion');
+
+        // Estados de la animacion: 'pausada' | 'reproduciendo' | 'terminada'
+        let animEstado = 'pausada';
+        let animId = null;           // id del requestAnimationFrame pendiente
+        let animPosicion = 0;        // posicion actual, fraccional (0 .. n-1)
+        let animProgresoBase = 0;    // progreso (0..1) con el que arranco este tramo
+        let animRelojBase = null;    // marca de tiempo del primer cuadro de este tramo
+        let animDuracion = 0;        // duracion de la ruta completa, en ms
+
         const COLOR_TRAMO_LUGAR = '#c026d3';
 
         // Leyenda del tramo resaltado: un control de Leaflet que solo se
@@ -714,6 +813,17 @@
             quitarLeyendaTramo();
             marcadorInicio = null;
             marcadorFin = null;
+
+            // Si la ruta desaparece, tambien su animacion y el punto resaltado:
+            // sin esto, una busqueda nueva dejaria corriendo la animacion de
+            // la anterior.
+            detenerYOcultarAnimacion();
+            puntosActuales = [];
+            lineaHover = null;
+            marcadorHover = null;
+            marcadorAnimacion = null;
+            ultimoLatLngHover = null;
+            cachePixeles = null;
         }
 
         // Formula de Haversine (la misma de distancia_metros() en app.py):
@@ -799,20 +909,315 @@
             limpiarResumen();
         }
 
+        // ===== Punto bajo el cursor de la ruta =====
+        // Sobre la ruta visible va una polilinea INVISIBLE y mucho mas gruesa
+        // que es la que recibe el mouse: una linea de 4 px es dificil de
+        // acertar. Los demas trazos (ruta, tramo resaltado) no reciben eventos
+        // (interactive: false) para que nunca tapen a esa zona sensible.
+
+        // Indice del punto de la ruta mas cercano a una coordenada del mapa.
+        // La comparacion se hace en PIXELES de pantalla, no en grados: es lo
+        // que el usuario ve (con zoom lejano varios puntos caen en el mismo
+        // pixel; con zoom cercano se distinguen uno a uno).
+        //
+        // Proyectar 5000 puntos a pixeles en CADA movimiento del mouse seria
+        // lento (sobre todo en un celular), asi que se hace una sola vez por
+        // nivel de zoom y se guarda: map.project() da coordenadas en pixeles
+        // del "mundo" para el zoom actual, que no cambian al mover el mapa.
+        // Despues, cada busqueda es solo un bucle de restas y multiplicaciones.
+        function pixelesDeLaRuta() {
+            const zoom = map.getZoom();
+            if (!cachePixeles || cachePixeles.puntos !== puntosActuales || cachePixeles.zoom !== zoom) {
+                const n = puntosActuales.length;
+                const xs = new Float64Array(n);
+                const ys = new Float64Array(n);
+                for (let i = 0; i < n; i++) {
+                    const proyectado = map.project([puntosActuales[i].lat, puntosActuales[i].lon], zoom);
+                    xs[i] = proyectado.x;
+                    ys[i] = proyectado.y;
+                }
+                cachePixeles = { puntos: puntosActuales, zoom: zoom, xs: xs, ys: ys };
+            }
+            return cachePixeles;
+        }
+
+        function indiceMasCercano(latlng) {
+            const { xs, ys } = pixelesDeLaRuta();
+            const objetivo = map.project(latlng, map.getZoom());
+            let mejorIndice = 0;
+            let mejorDistancia = Infinity;
+            for (let i = 0; i < xs.length; i++) {
+                const dx = xs[i] - objetivo.x;
+                const dy = ys[i] - objetivo.y;
+                const distancia = dx * dx + dy * dy;
+                if (distancia < mejorDistancia) {
+                    mejorDistancia = distancia;
+                    mejorIndice = i;
+                }
+            }
+            return mejorIndice;
+        }
+
+        // Marca un punto de la ruta con un circulo y una etiqueta con su
+        // fecha/hora y coordenadas. Reutiliza el mismo circulo en cada llamada.
+        function resaltarPunto(indice) {
+            const p = puntosActuales[indice];
+            if (!p) return;
+
+            const contenido = `<b>${p.hora}</b><br>${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
+
+            if (!marcadorHover) {
+                marcadorHover = L.circleMarker([p.lat, p.lon], {
+                    radius: 7, color: '#2563eb', weight: 3,
+                    fillColor: '#ffffff', fillOpacity: 1,
+                    interactive: false,
+                    bubblingMouseEvents: false
+                }).addTo(capaRecorrido)
+                  .bindTooltip(contenido, {
+                      permanent: true,
+                      direction: 'top',
+                      offset: [0, -8],
+                      className: 'etiqueta-punto'
+                  });
+            } else {
+                marcadorHover.setLatLng([p.lat, p.lon]);
+                marcadorHover.setTooltipContent(contenido);
+            }
+        }
+
+        function ocultarPuntoHover() {
+            if (marcadorHover) {
+                capaRecorrido.removeLayer(marcadorHover);
+                marcadorHover = null;
+            }
+        }
+
+        function crearLineaHover(coordenadas) {
+            lineaHover = L.polyline(coordenadas, {
+                weight: 20,
+                opacity: 0,
+                bubblingMouseEvents: false
+            }).addTo(capaRecorrido);
+
+            // mousemove dispara decenas de veces por segundo y con hasta 5000
+            // puntos cada busqueda cuesta: se atiende como maximo una vez por
+            // cuadro de pantalla (requestAnimationFrame).
+            lineaHover.on('mousemove', function(evento) {
+                ultimoLatLngHover = evento.latlng;
+                if (hoverPendiente) return;
+                hoverPendiente = true;
+                requestAnimationFrame(function() {
+                    hoverPendiente = false;
+                    if (ultimoLatLngHover && lineaHover) {
+                        resaltarPunto(indiceMasCercano(ultimoLatLngHover));
+                    }
+                });
+            });
+
+            // Al sacar el mouse de la ruta se quita la marca.
+            lineaHover.on('mouseout', function() {
+                ultimoLatLngHover = null;
+                ocultarPuntoHover();
+            });
+
+            // En pantallas tactiles no existe "pasar el mouse": tocar la ruta
+            // hace lo mismo. La marca queda hasta tocar otra parte del mapa.
+            lineaHover.on('click', function(evento) {
+                resaltarPunto(indiceMasCercano(evento.latlng));
+            });
+        }
+
+        // Tocar el mapa fuera de la ruta quita la marca (util en el celular).
+        // Los clics sobre la ruta no llegan hasta aqui (bubblingMouseEvents: false).
+        map.on('click', ocultarPuntoHover);
+
+        // ===== Animacion de la ruta con slider =====
+        // Un circulo amarillo recorre la ruta desde el primer punto hasta el
+        // ultimo. La duracion total va de 3 a 10 segundos sin importar cuantos
+        // puntos haya, y se mide por TIEMPO (no "N puntos por cuadro"): asi una
+        // ruta de 5000 puntos y una de 20 puntos tardan un tiempo razonable.
+        const DURACION_MIN_MS = 3000;
+        const DURACION_MAX_MS = 10000;
+        const MS_POR_PUNTO = 60;
+
+        // Coloca el circulo en una posicion FRACCIONAL de la ruta (por ejemplo
+        // 12.4 = 40% del camino entre el punto 12 y el 13) para que el
+        // movimiento sea suave en vez de saltar de punto en punto.
+        function posicionarAnimacion(posicion) {
+            const n = puntosActuales.length;
+            if (n === 0 || !marcadorAnimacion) return;
+
+            const p = Math.min(Math.max(posicion, 0), n - 1);
+            const i = Math.floor(p);
+            const fraccion = p - i;
+            const a = puntosActuales[i];
+            const b = puntosActuales[Math.min(i + 1, n - 1)];
+
+            marcadorAnimacion.setLatLng([
+                a.lat + (b.lat - a.lat) * fraccion,
+                a.lon + (b.lon - a.lon) * fraccion
+            ]);
+
+            const indice = Math.round(p);
+            sliderRuta.value = indice;
+            etiquetaAnimacion.textContent =
+                `🕐 ${puntosActuales[indice].hora}  ·  punto ${indice + 1} de ${n}`;
+            animPosicion = p;
+        }
+
+        function actualizarBotonAnimacion() {
+            if (animEstado === 'reproduciendo') {
+                botonAnimacion.textContent = '⏸ Pausar';
+            } else if (animEstado === 'terminada') {
+                botonAnimacion.textContent = '↻ Repetir';
+            } else {
+                botonAnimacion.textContent = '▶ Reproducir';
+            }
+        }
+
+        // Un cuadro de la animacion. 'ahora' es la marca de tiempo que da el
+        // navegador; el progreso se calcula con la diferencia de tiempo, no
+        // contando cuadros, asi la duracion es la misma en cualquier pantalla.
+        function bucleAnimacion(ahora) {
+            animId = null;
+            if (animEstado !== 'reproduciendo') return;
+
+            const n = puntosActuales.length;
+            if (animRelojBase === null) animRelojBase = ahora;
+
+            const progreso = animProgresoBase + (ahora - animRelojBase) / animDuracion;
+
+            if (progreso >= 1) {
+                posicionarAnimacion(n - 1);
+                animEstado = 'terminada';
+                actualizarBotonAnimacion();
+                return;
+            }
+
+            posicionarAnimacion(progreso * (n - 1));
+            animId = requestAnimationFrame(bucleAnimacion);
+        }
+
+        function reproducirAnimacion() {
+            const n = puntosActuales.length;
+            if (n < 2) return;
+
+            // Si ya habia terminado (o el slider quedo al final), empieza de nuevo.
+            if (animEstado === 'terminada' || animPosicion >= n - 1) {
+                animPosicion = 0;
+            }
+
+            animProgresoBase = animPosicion / (n - 1);
+            animRelojBase = null;   // se fija en el primer cuadro
+            animEstado = 'reproduciendo';
+            actualizarBotonAnimacion();
+
+            if (animId !== null) cancelAnimationFrame(animId);
+            animId = requestAnimationFrame(bucleAnimacion);
+        }
+
+        function pausarAnimacion() {
+            if (animId !== null) {
+                cancelAnimationFrame(animId);
+                animId = null;
+            }
+            animEstado = 'pausada';
+            actualizarBotonAnimacion();
+        }
+
+        // Cancela cualquier cuadro pendiente y esconde la barra. Se llama desde
+        // limpiarCapaRecorrido(), asi que cubre TODAS las formas de borrar la ruta.
+        function detenerYOcultarAnimacion() {
+            if (animId !== null) {
+                cancelAnimationFrame(animId);
+                animId = null;
+            }
+            animEstado = 'pausada';
+            animPosicion = 0;
+            barraAnimacion.style.display = 'none';
+        }
+
+        // Si el usuario arrastra el slider y el circulo sale de la vista, el
+        // mapa lo sigue. Solo se hace al mover el slider a mano; durante la
+        // animacion automatica no, para no pelear con el usuario si esta
+        // moviendo o acercando el mapa.
+        function seguirMarcadorAnimacion() {
+            if (!marcadorAnimacion) return;
+            const posicion = marcadorAnimacion.getLatLng();
+            if (!map.getBounds().pad(-0.1).contains(posicion)) {
+                map.panTo(posicion, { animate: false });
+            }
+        }
+
+        // Crea el circulo y la barra para la ruta recien dibujada y, salvo que
+        // el usuario pida reducir el movimiento en su sistema, arranca sola.
+        function prepararAnimacion() {
+            const n = puntosActuales.length;
+            if (n < 2) return;   // con un solo punto no hay recorrido que animar
+
+            animDuracion = Math.min(DURACION_MAX_MS, Math.max(DURACION_MIN_MS, n * MS_POR_PUNTO));
+
+            const primero = puntosActuales[0];
+            marcadorAnimacion = L.circleMarker([primero.lat, primero.lon], {
+                radius: 9, color: '#1e293b', weight: 3,
+                fillColor: '#fbbf24', fillOpacity: 1,
+                interactive: false,
+                bubblingMouseEvents: false
+            }).addTo(capaRecorrido);
+
+            sliderRuta.min = 0;
+            sliderRuta.max = n - 1;
+            sliderRuta.step = 1;
+            barraAnimacion.style.display = 'flex';
+
+            animEstado = 'pausada';
+            animPosicion = 0;
+            posicionarAnimacion(0);
+            actualizarBotonAnimacion();
+
+            const reducirMovimiento = typeof window.matchMedia === 'function' &&
+                window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            if (!reducirMovimiento) reproducirAnimacion();
+        }
+
+        botonAnimacion.addEventListener('click', function() {
+            if (animEstado === 'reproduciendo') {
+                pausarAnimacion();
+            } else {
+                // Desde una pausa continua donde quedo; si habia terminado,
+                // empieza de nuevo.
+                reproducirAnimacion();
+            }
+        });
+
+        // Mover el slider pausa la animacion y lleva el circulo a ese punto:
+        // asi se puede recorrer la ruta hacia atras o hacia adelante.
+        sliderRuta.addEventListener('input', function() {
+            pausarAnimacion();
+            posicionarAnimacion(Number(sliderRuta.value));
+            seguirMarcadorAnimacion();
+        });
+
         // ===== Cuarta Parte: dibujar el recorrido =====
         function dibujarRecorrido(puntos) {
             limpiarCapaRecorrido();
+            puntosActuales = puntos;
 
             const coordenadas = puntos.map(p => [p.lat, p.lon]);
 
+            // interactive: false: este trazo solo se ve. Quien recibe el mouse
+            // es la polilinea invisible de crearLineaHover(). Ademas,
             // bubblingMouseEvents: false evita que un clic sobre la ruta
             // "atraviese" la linea y coloque un pin en el mapa de abajo.
             L.polyline(coordenadas, {
                 color: '#2563eb',
                 weight: 4,
                 opacity: 0.75,
+                interactive: false,
                 bubblingMouseEvents: false
             }).addTo(capaRecorrido);
+
+            crearLineaHover(coordenadas);
 
             const inicio = puntos[0];
             const fin = puntos[puntos.length - 1];
@@ -853,6 +1258,10 @@
                 padding: [40, 40],
                 maxZoom: 17
             });
+
+            // Al final: la barra y el circulo animado se crean cuando la ruta
+            // ya esta dibujada y encuadrada.
+            prepararAnimacion();
         }
 
         // Resalta, encima de la ruta ya dibujada, los puntos que quedaron
@@ -884,24 +1293,30 @@
 
             tramos.forEach(function(tramo) {
                 if (tramo.length > 1) {
+                    // interactive: false: el mouse "atraviesa" el resaltado y
+                    // llega a la zona sensible de la ruta (punto bajo el cursor).
                     L.polyline(tramo.map(p => [p.lat, p.lon]), {
                         color: COLOR_TRAMO_LUGAR,
                         weight: 8,
                         opacity: 0.95,
+                        interactive: false,
                         bubblingMouseEvents: false
                     }).addTo(capaRecorrido);
                 } else {
                     L.circleMarker([tramo[0].lat, tramo[0].lon], {
                         radius: 7, color: '#ffffff', weight: 2,
                         fillColor: COLOR_TRAMO_LUGAR, fillOpacity: 1,
+                        interactive: false,
                         bubblingMouseEvents: false
                     }).addTo(capaRecorrido);
                 }
             });
 
-            // Los circulos de Inicio y Fin deben quedar por encima del resaltado.
+            // Los circulos de Inicio y Fin y el circulo animado deben quedar
+            // por encima del resaltado.
             if (marcadorInicio) marcadorInicio.bringToFront();
             if (marcadorFin) marcadorFin.bringToFront();
+            if (marcadorAnimacion) marcadorAnimacion.bringToFront();
 
             mostrarLeyendaTramo(radio);
         }
