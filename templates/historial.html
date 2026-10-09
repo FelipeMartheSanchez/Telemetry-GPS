@@ -499,6 +499,58 @@
             font-weight: 500;
             color: #94a3b8;
         }
+
+        /* Boton del pin: control de Leaflet en la esquina superior derecha
+           del mapa (solo existe en el modo "Por lugar"). */
+        .control-pin {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .boton-pin {
+            width: 38px;
+            height: 38px;
+            border: none;
+            border-radius: 10px;
+            background: #ffffff;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+            font-size: 20px;
+            line-height: 1;
+            cursor: pointer;
+            transition: background 0.15s ease;
+        }
+
+        .boton-pin:hover {
+            background: #f1f5f9;
+        }
+
+        /* Modo pin activado: el boton se resalta y aparece el aviso */
+        .boton-pin.activo {
+            background: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35), 0 2px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .control-pin-aviso {
+            display: none;
+            background: rgba(15, 23, 42, 0.88);
+            color: #ffffff;
+            padding: 6px 12px;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .control-pin.activo .control-pin-aviso {
+            display: block;
+        }
+
+        /* Con el modo pin activado el cursor cambia a una cruz */
+        #map.pin-activo,
+        #map.pin-activo .leaflet-interactive {
+            cursor: crosshair !important;
+        }
     </style>
 </head>
 <body>
@@ -559,7 +611,7 @@
             </div>
         </div>
         <button id="btnBuscarLugar" disabled>Buscar</button>
-        <div class="ayuda-pin">💡 También puedes tocar el mapa para colocar un pin y buscar en ese punto exacto.</div>
+        <div class="ayuda-pin">💡 También puedes tocar el botón 📍 (esquina superior derecha del mapa) y luego el punto exacto para buscar ahí.</div>
     </div>
 
     <div id="mensaje"></div>
@@ -957,6 +1009,13 @@
             subtabLugar.classList.toggle('activa', !esFecha);
             controlesFecha.style.display = esFecha ? 'flex' : 'none';
             controlesLugar.style.display = esFecha ? 'none' : 'flex';
+
+            // El boton del pin solo existe en el modo "Por lugar".
+            if (esFecha) {
+                ocultarControlPin();
+            } else {
+                mostrarControlPin();
+            }
         }
 
         subtabFecha.addEventListener('click', () => cambiarModo('fecha'));
@@ -1053,15 +1112,110 @@
             establecerPin(latlng);
         }
 
+        // Quitar el pin tambien apaga el modo pin: se llama al escribir una
+        // direccion, elegir una sugerencia, pulsar la "x" o cambiar de modo,
+        // y en todos esos casos el usuario ya no esta eligiendo un punto.
         function quitarPin() {
             capaPin.clearLayers();
             pinMarcador = null;
+            desactivarModoPin();
         }
 
-        // Solo en el modo "Por lugar": en "Por fecha" un clic en el mapa no hace nada.
+        // --- Boton del pin (modo pin) ---
+        // Antes, cualquier clic en el mapa colocaba un pin, y arrastrar o
+        // hacer scroll sobre el mapa podia colocarlo sin querer. Ahora hay que
+        // activar el modo con un boton en la esquina del mapa; el SIGUIENTE
+        // toque coloca el pin y el modo se apaga solo.
+        let modoPinActivo = false;
+        let controlPinVisible = false;
+        let contenedorControlPin = null;
+
+        // Para ignorar toques justo despues de mover o hacer zoom al mapa.
+        let mapaMoviendose = false;
+        let finMovimientoMapa = 0;
+        const PAUSA_TRAS_MOVER_MS = 250;
+
+        map.on('movestart', function() { mapaMoviendose = true; });
+        map.on('moveend', function() {
+            mapaMoviendose = false;
+            finMovimientoMapa = Date.now();
+        });
+
+        const controlPin = L.control({ position: 'topright' });
+        controlPin.onAdd = function() {
+            const contenedor = L.DomUtil.create('div', 'control-pin');
+            contenedor.innerHTML =
+                '<span class="control-pin-aviso">Toca el mapa para colocar el pin</span>' +
+                '<button type="button" class="boton-pin" title="Colocar un pin en el mapa" aria-pressed="false">📍</button>';
+            // Evita que pulsar el boton cuente como un toque en el mapa.
+            L.DomEvent.disableClickPropagation(contenedor);
+            L.DomEvent.disableScrollPropagation(contenedor);
+            contenedor.querySelector('.boton-pin').addEventListener('click', alternarModoPin);
+            contenedorControlPin = contenedor;
+            return contenedor;
+        };
+
+        function activarModoPin() {
+            modoPinActivo = true;
+            if (contenedorControlPin) {
+                contenedorControlPin.classList.add('activo');
+                const boton = contenedorControlPin.querySelector('.boton-pin');
+                boton.classList.add('activo');
+                boton.setAttribute('aria-pressed', 'true');
+            }
+            map.getContainer().classList.add('pin-activo');
+        }
+
+        function desactivarModoPin() {
+            modoPinActivo = false;
+            if (contenedorControlPin) {
+                contenedorControlPin.classList.remove('activo');
+                const boton = contenedorControlPin.querySelector('.boton-pin');
+                boton.classList.remove('activo');
+                boton.setAttribute('aria-pressed', 'false');
+            }
+            map.getContainer().classList.remove('pin-activo');
+        }
+
+        // Pulsar el boton otra vez con el modo activo lo cancela.
+        function alternarModoPin() {
+            if (modoPinActivo) {
+                desactivarModoPin();
+            } else {
+                activarModoPin();
+            }
+        }
+
+        function mostrarControlPin() {
+            if (!controlPinVisible) {
+                controlPin.addTo(map);
+                controlPinVisible = true;
+            }
+        }
+
+        function ocultarControlPin() {
+            desactivarModoPin();
+            if (controlPinVisible) {
+                controlPin.remove();
+                controlPinVisible = false;
+            }
+        }
+
+        // Escape cancela el modo pin sin colocar nada.
+        document.addEventListener('keydown', function(evento) {
+            if (evento.key === 'Escape' && modoPinActivo) {
+                desactivarModoPin();
+            }
+        });
+
+        // Solo coloca el pin si estamos en "Por lugar" Y el modo pin esta
+        // activo. Si el mapa se esta moviendo (o acaba de moverse) el toque
+        // se ignora y el modo sigue activo para volver a intentarlo.
         map.on('click', function(evento) {
-            if (modoActual !== 'lugar') return;
+            if (modoActual !== 'lugar' || !modoPinActivo) return;
+            if (mapaMoviendose || Date.now() - finMovimientoMapa < PAUSA_TRAS_MOVER_MS) return;
             colocarPin(evento.latlng);
+            desactivarModoPin();
         });
 
         async function buscarSugerencias(texto) {
