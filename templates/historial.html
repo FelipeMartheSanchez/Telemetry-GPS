@@ -1177,6 +1177,21 @@
         const DURACION_MAX_MS = 10000;
         const MS_POR_PUNTO = 60;
 
+        // Mientras Leaflet hace la animacion de zoom, el mapa YA cambio su nivel
+        // de zoom por dentro, pero las lineas siguen "estiradas" con una
+        // transformacion visual hasta que termina. Si en ese momento se
+        // recalcula la posicion del circulo, se calcula con el zoom nuevo y se
+        // dibuja sobre la capa vieja: el punto se ve en otro lugar y vuelve a
+        // la ruta cuando termina el zoom. Por eso, durante el zoom el circulo
+        // se deja quieto (se escala junto con la ruta) y al terminar se coloca
+        // donde corresponde segun el progreso de la animacion.
+        let zoomEnCurso = false;
+        map.on('zoomstart', function() { zoomEnCurso = true; });
+        map.on('zoomend', function() {
+            zoomEnCurso = false;
+            posicionarAnimacion(animPosicion);
+        });
+
         // Coloca el circulo en una posicion FRACCIONAL de la ruta (por ejemplo
         // 12.4 = 40% del camino entre el punto 12 y el 13) para que el
         // movimiento sea suave en vez de saltar de punto en punto.
@@ -1190,10 +1205,12 @@
             const a = puntosActuales[i];
             const b = puntosActuales[Math.min(i + 1, n - 1)];
 
-            marcadorAnimacion.setLatLng([
-                a.lat + (b.lat - a.lat) * fraccion,
-                a.lon + (b.lon - a.lon) * fraccion
-            ]);
+            if (!zoomEnCurso) {
+                marcadorAnimacion.setLatLng([
+                    a.lat + (b.lat - a.lat) * fraccion,
+                    a.lon + (b.lon - a.lon) * fraccion
+                ]);
+            }
 
             const indice = Math.round(p);
             sliderRuta.value = indice;
