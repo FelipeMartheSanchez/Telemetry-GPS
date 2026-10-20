@@ -262,7 +262,8 @@
         #pantallaCarga.error #btnCerrarCarga {
             display: inline-block;
         }
-    </style>
+        .icono-vivo { font-size: 26px; text-align: center; line-height: 30px; }
+</style>
 </head>
 <body>
 
@@ -383,7 +384,7 @@
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        let marker = L.marker([4.570868, -74.297333]).addTo(map);
+        let marker = L.marker([4.570868, -74.297333], {icon: L.divIcon({html: '🚚', className: 'icono-vivo', iconSize: [30, 30], iconAnchor: [15, 15]})}).addTo(map);
 
         let esPrimeraUbicacion = true;
 
