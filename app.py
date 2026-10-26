@@ -1,6 +1,11 @@
 import os
 import math
 import socket
+import json
+import time
+import threading
+import urllib.parse
+import urllib.request
 import mysql.connector
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -469,22 +474,21 @@ def api_lugar():
     except ValueError:
         return jsonify({'error': 'lat y lon deben ser numeros validos'}), 400
 
-    # Rango de fechas OPCIONAL: puede venir solo desde, solo hasta, ambos o
-    # ninguno. Llegan en hora de Colombia, igual que en /api/historial.
+    # Primero fechas, despues lugar: el rango es OBLIGATORIO. Llega en hora
+    # de Colombia, igual que en /api/historial.
     desde = request.args.get('desde')
     hasta = request.args.get('hasta')
-    desde_utc = None
-    hasta_utc = None
+
+    if not desde or not hasta:
+        return jsonify({'error': 'Primero elige las fechas: faltan los parametros desde y hasta'}), 400
 
     try:
-        if desde:
-            desde_utc = a_utc(desde)
-        if hasta:
-            hasta_utc = a_utc(hasta)
+        desde_utc = a_utc(desde)
+        hasta_utc = a_utc(hasta)
     except ValueError:
         return jsonify({'error': 'Formato de fecha invalido'}), 400
 
-    if desde_utc and hasta_utc and desde_utc >= hasta_utc:
+    if desde_utc >= hasta_utc:
         return jsonify({'error': 'La fecha inicial debe ser anterior a la final'}), 400
 
     try:
@@ -498,6 +502,61 @@ def api_lugar():
         'visitas': visitas,
         'total_visitas': len(visitas)
     })
+
+# --- Direccion y barrio del vehiculo (geocodificacion inversa) ---
+# Nominatim (OpenStreetMap) permite ~1 consulta por segundo y exige un
+# User-Agent propio. Por eso se consulta desde el servidor, con cache por
+# celda de ~25 m y un minimo de 1.1 s entre consultas reales.
+_cache_direccion = {}
+_ultima_consulta_nominatim = 0.0
+_candado_nominatim = threading.Lock()
+
+@app.route('/api/direccion')
+def api_direccion():
+    global _ultima_consulta_nominatim
+    try:
+        lat = float(request.args.get('lat', ''))
+        lon = float(request.args.get('lon', ''))
+    except ValueError:
+        return jsonify({'error': 'lat y lon deben ser numeros validos'}), 400
+
+    clave = (round(lat, 4), round(lon, 4))
+    if clave in _cache_direccion:
+        return jsonify(_cache_direccion[clave])
+
+    with _candado_nominatim:
+        espera = 1.1 - (time.time() - _ultima_consulta_nominatim)
+        if espera > 0:
+            time.sleep(espera)
+        _ultima_consulta_nominatim = time.time()
+        url = 'https://nominatim.openstreetmap.org/reverse?' + urllib.parse.urlencode({
+            'format': 'jsonv2', 'lat': lat, 'lon': lon,
+            'zoom': 18, 'addressdetails': 1, 'accept-language': 'es'
+        })
+        peticion = urllib.request.Request(url, headers={'User-Agent': f'TelemetriaGPS/{NOMBRE_PAGINA}'})
+        try:
+            with urllib.request.urlopen(peticion, timeout=6) as r:
+                datos = json.load(r)
+        except Exception as error:
+            print(f"Error en geocodificacion inversa: {error}")
+            return jsonify({'error': 'No se pudo obtener la direccion'}), 502
+
+    d = datos.get('address', {})
+    calle = d.get('road') or d.get('pedestrian') or d.get('footway') or ''
+    numero = d.get('house_number', '')
+    barrio = (d.get('neighbourhood') or d.get('suburb') or d.get('quarter')
+              or d.get('city_district') or '')
+    ciudad = d.get('city') or d.get('town') or d.get('village') or d.get('municipality') or ''
+    resultado = {
+        'direccion': (f"{calle} {numero}".strip()) or datos.get('name') or '',
+        'barrio': barrio,
+        'ciudad': ciudad,
+        'completa': datos.get('display_name', '')
+    }
+    if len(_cache_direccion) > 2000:
+        _cache_direccion.clear()
+    _cache_direccion[clave] = resultado
+    return jsonify(resultado)
 
 if __name__ == '__main__':
     print(f"Página: {NOMBRE_PAGINA}")
