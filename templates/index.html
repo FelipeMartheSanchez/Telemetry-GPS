@@ -21,48 +21,72 @@
             font-family: 'Poppins', sans-serif;
         }
 
-        body {
+        /* El mapa ocupa TODA la ventana; la interfaz flota encima. */
+        html, body {
+            height: 100%;
+            overflow: hidden;
             background-color: #f4f7f6;
             color: #333;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
-            padding: 20px;
+        }
+
+        .mapa-contenedor {
+            position: fixed;
+            inset: 0;
+        }
+
+        #map {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Panel flotante (arriba a la izquierda) */
+        .panel {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 1100;               /* sobre el mapa y la pantalla de carga */
+            width: min(340px, calc(100vw - 24px));
+            max-height: calc(100vh - 24px);
+            overflow-y: auto;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid #e2e8f0;
+            border-radius: 18px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+            padding: 14px 16px;
         }
 
         h1 {
-            margin-top: 10px;
-            margin-bottom: 15px;
-            font-size: 1.8rem;
+            font-size: 1.05rem;
             font-weight: 600;
             color: #1e293b;
-            text-align: center;
+            margin-bottom: 10px;
         }
 
         /* Pestañas de navegación entre las dos vistas */
         .tabs {
             display: flex;
-            gap: 8px;
-            margin-bottom: 25px;
+            gap: 6px;
+            margin-bottom: 12px;
             background: #e2e8f0;
-            padding: 5px;
+            padding: 4px;
             border-radius: 50px;
         }
 
         .tab {
-            padding: 8px 22px;
+            flex: 1;
+            text-align: center;
+            padding: 6px 10px;
             border-radius: 50px;
             text-decoration: none;
-            font-size: 0.9rem;
+            font-size: 0.82rem;
             font-weight: 600;
             color: #64748b;
             transition: background 0.2s ease, color 0.2s ease;
         }
 
-        .tab:hover {
-            color: #1e293b;
-        }
+        .tab:hover { color: #1e293b; }
 
         .tab.activa {
             background: #ffffff;
@@ -70,71 +94,82 @@
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
         }
 
-        /* Contenedor de cápsulas/óvalos superiores */
-        .cards-container {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 15px;
-            max-width: 900px;
-            width: 100%;
-            margin-bottom: 25px;
+        /* Dirección y barrio donde está el vehículo */
+        .ubicacion {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 14px;
+            padding: 10px 12px;
+            margin-bottom: 10px;
         }
 
-        /* Diseño ovalado para cada dato */
-        .card {
-            background: #ffffff;  /*#dbeafe;*/
-            border-radius: 50px; /* Bordes muy redondeados para efecto óvalo */
-            padding: 12px 25px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            border: 1px solid #e2e8f0;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
-        }
-
-        .card-label {
-            font-size: 0.85rem;
+        .dato-etiqueta {
+            font-size: 0.68rem;
             font-weight: 600;
             color: #64748b;
             text-transform: uppercase;
+            letter-spacing: 0.03em;
         }
 
-        .card-value {
-            font-size: 0.95rem;
+        .dato-valor {
+            font-size: 0.9rem;
             font-weight: 600;
             color: #0f172a;
+            word-break: break-word;
         }
 
-        /* Contenedor del mapa: la pantalla de carga se posiciona encima
-           del mapa unicamente, no de toda la pagina. */
-        .mapa-contenedor {
-            position: relative;
-            width: 100%;
-            max-width: 900px;
+        .ubicacion .dato-valor + .dato-etiqueta { margin-top: 6px; }
+
+        /* Fecha, hora y puntos */
+        .datos {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 8px;
         }
 
-        /* Estilo centrado del Mapa */
-        #map {
-            width: 100%;
-            height: 480px;
-            border-radius: 20px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+        .datos > div {
+            background: #f8fafc;
             border: 1px solid #e2e8f0;
-            overflow: hidden;
+            border-radius: 12px;
+            padding: 6px 8px;
         }
+
+        .datos .dato-valor { font-size: 0.8rem; }
+
+        /* Desplegable de latitud y longitud */
+        details.coordenadas {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            background: #f8fafc;
+        }
+
+        details.coordenadas summary {
+            cursor: pointer;
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #2563eb;
+            list-style: none;
+        }
+
+        details.coordenadas summary::-webkit-details-marker { display: none; }
+        details.coordenadas summary::before { content: '▸ '; }
+        details.coordenadas[open] summary::before { content: '▾ '; }
+
+        .coordenadas-cuerpo {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            padding: 0 12px 10px;
+        }
+
+        .leaflet-control-zoom { margin-bottom: 24px !important; }
 
         /* ===== Pantalla de carga (solo sobre el mapa) ===== */
         #pantallaCarga {
             position: absolute;
             inset: 0;
-            border-radius: 20px;
             background: rgba(244, 247, 246, 0.95);
             display: flex;
             flex-direction: column;
@@ -267,39 +302,7 @@
 </head>
 <body>
 
-    <h1>📡 {{ nombre_pagina }}</h1>
-
-    <!-- Navegación entre la vista en vivo y el histórico -->
-    <div class="tabs">
-        <a href="/" class="tab activa">📡 En vivo</a>
-        <a href="/historial" class="tab">🕘 Histórico</a>
-    </div>
-
-    <!-- Óvalos con información en la parte superior -->
-    <div class="cards-container">
-        <div class="card">
-            <span class="card-label">Latitud:</span>
-            <span id="lat" class="card-value">---</span>
-        </div>
-        <div class="card">
-            <span class="card-label">Longitud:</span>
-            <span id="lon" class="card-value">---</span>
-        </div>
-        <div class="card">
-            <span class="card-label">Fecha:</span>
-            <span id="fecha" class="card-value">---</span>
-        </div>
-        <div class="card">
-            <span class="card-label">Hora COL:</span>
-            <span id="hora_col" class="card-value">---</span>
-        </div>
-        <div class="card">
-            <span class="card-label">Puntos:</span>
-            <span id="puntos" class="card-value">0</span>
-        </div>
-    </div>
-
-    <!-- Mapa con su pantalla de carga encima -->
+    <!-- Mapa a pantalla completa con su pantalla de carga encima -->
     <div class="mapa-contenedor">
         <div id="map"></div>
 
@@ -376,9 +379,42 @@
         </div>
     </div>
 
+    <!-- Panel flotante sobre el mapa -->
+    <div class="panel">
+        <h1>📡 {{ nombre_pagina }}</h1>
+
+        <div class="tabs">
+            <a href="/" class="tab activa">📡 En vivo</a>
+            <a href="/historial" class="tab">🕘 Histórico</a>
+        </div>
+
+        <div class="ubicacion">
+            <div class="dato-etiqueta">Dirección</div>
+            <div id="direccion" class="dato-valor">Esperando ubicación...</div>
+            <div class="dato-etiqueta">Barrio / localidad</div>
+            <div id="barrio" class="dato-valor">---</div>
+        </div>
+
+        <div class="datos">
+            <div><div class="dato-etiqueta">Fecha</div><div id="fecha" class="dato-valor">---</div></div>
+            <div><div class="dato-etiqueta">Hora COL</div><div id="hora_col" class="dato-valor">---</div></div>
+            <div><div class="dato-etiqueta">Envíos</div><div id="puntos" class="dato-valor">0</div></div>
+        </div>
+
+        <!-- Latitud y longitud: ocultas hasta que el usuario las pide -->
+        <details class="coordenadas">
+            <summary>Ver latitud y longitud</summary>
+            <div class="coordenadas-cuerpo">
+                <div><div class="dato-etiqueta">Latitud</div><div id="lat" class="dato-valor">---</div></div>
+                <div><div class="dato-etiqueta">Longitud</div><div id="lon" class="dato-valor">---</div></div>
+            </div>
+        </details>
+    </div>
+
     <script>
         // Inicializar Mapa centrado en Colombia por defecto
-        const map = L.map('map').setView([4.570868, -74.297333], 6);
+        const map = L.map('map', { zoomControl: false }).setView([4.570868, -74.297333], 6);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
@@ -454,6 +490,45 @@
             iniciarEspera('Intentando conectar de nuevo con el vehículo...');
         });
 
+        // ===== Dirección y barrio =====
+        // Se pide al servidor (/api/direccion, que cuida el límite de
+        // Nominatim) solo cuando el vehículo se movió al menos 40 m desde la
+        // última consulta y pasaron 5 s, para no consultar en cada punto.
+        let ultimaConsulta = null;       // {lat, lon, t}
+        let consultando = false;
+
+        function distanciaM(lat1, lon1, lat2, lon2) {
+            const r = 6371000, rad = g => g * Math.PI / 180;
+            const a = Math.sin(rad(lat2 - lat1) / 2) ** 2 +
+                      Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(rad(lon2 - lon1) / 2) ** 2;
+            return 2 * r * Math.asin(Math.sqrt(a));
+        }
+
+        async function actualizarDireccion(lat, lon) {
+            if (consultando) return;
+            const ahora = Date.now();
+            if (ultimaConsulta &&
+                (ahora - ultimaConsulta.t < 5000 ||
+                 distanciaM(lat, lon, ultimaConsulta.lat, ultimaConsulta.lon) < 40)) return;
+
+            consultando = true;
+            try {
+                const r = await fetch(`/api/direccion?lat=${lat}&lon=${lon}`);
+                if (!r.ok) throw new Error('sin direccion');
+                const d = await r.json();
+                const lugar = [d.barrio, d.ciudad].filter(Boolean).join(', ');
+                document.getElementById('direccion').innerText = d.direccion || d.completa || 'Sin dirección disponible';
+                document.getElementById('barrio').innerText = lugar || '---';
+                ultimaConsulta = { lat: lat, lon: lon, t: ahora };
+            } catch (e) {
+                console.error(e);
+                // Se conserva lo último mostrado; se reintenta con el siguiente punto.
+                ultimaConsulta = ultimaConsulta ? Object.assign(ultimaConsulta, { t: ahora }) : { lat: 0, lon: 0, t: ahora - 3000 };
+            } finally {
+                consultando = false;
+            }
+        }
+
         socket.on('actualizacion_gps', function(msg) {
             // Apenas llega un dato real, se oculta la pantalla de carga
             // sin importar en qué estado estaba.
@@ -481,6 +556,7 @@
                 puntosRecorrido.push(newLatLng);
                 lineaRecorrido.addLatLng(newLatLng);
                 document.getElementById('puntos').innerText = puntosRecorrido.length;
+                actualizarDireccion(lat, lon);
 
                 if (esPrimeraUbicacion) {
                     // Solo la primera vez hacemos zoom inicial automático
