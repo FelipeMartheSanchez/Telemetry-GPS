@@ -529,6 +529,27 @@
             display: block;
         }
 
+        /* Numero de paso (1 fechas, 2 lugar) dentro de la etiqueta */
+        .campo label .paso {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            line-height: 18px;
+            margin-right: 4px;
+            border-radius: 50%;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 0.7rem;
+            text-align: center;
+        }
+
+        /* Lugar bloqueado hasta que haya un rango de fechas valido */
+        .campo input:disabled {
+            cursor: not-allowed;
+            background: #e2e8f0;
+            color: #94a3b8;
+        }
+
         /* "(opcional)" dentro de la etiqueta: sin mayusculas ni negrita */
         .campo label .opcional {
             text-transform: none;
@@ -682,36 +703,34 @@
         <button id="btnConsultar">Consultar</button>
     </div>
 
-    <!-- Controles del modo "Por lugar" (oculto por defecto) -->
+    <!-- Controles del modo "Por lugar" (oculto por defecto).
+         Paso 1: el rango de fechas (obligatorio). Paso 2: el lugar, que
+         permanece bloqueado hasta que el rango sea valido. -->
     <div class="controles" id="controlesLugar" style="display: none;">
-        <div class="campo campo-autocompletar">
-            <label for="direccionLugar">Dirección o lugar</label>
+        <div class="campo">
+            <label for="desdeLugar"><span class="paso">1</span> Desde</label>
+            <div class="envoltura-fecha">
+                <input type="text" id="desdeLugar" placeholder="Selecciona fecha y hora">
+            </div>
+        </div>
+        <div class="campo">
+            <label for="hastaLugar"><span class="paso">1</span> Hasta</label>
+            <div class="envoltura-fecha">
+                <input type="text" id="hastaLugar" placeholder="Selecciona fecha y hora">
+            </div>
+        </div>
+        <div class="campo campo-autocompletar" id="campoLugar">
+            <label for="direccionLugar"><span class="paso">2</span> Dirección o lugar</label>
             <div class="envoltura-input">
                 <input type="text" id="direccionLugar" class="campo-texto"
-                       placeholder="Escribe para buscar..." autocomplete="off">
+                       placeholder="Primero elige las fechas" autocomplete="off" disabled>
                 <button type="button" id="btnLimpiarLugar" class="btn-limpiar" title="Borrar búsqueda">&times;</button>
             </div>
             <!-- Lista desplegable de sugerencias, estilo Google Maps -->
             <div id="listaSugerencias" class="sugerencias"></div>
         </div>
-        <!-- Rango de fechas OPCIONAL: se puede buscar solo por lugar, o limitar
-             las visitas a un rango (solo desde, solo hasta, o ambos). -->
-        <div class="campo">
-            <label for="desdeLugar">Desde <span class="opcional">(opcional)</span></label>
-            <div class="envoltura-fecha">
-                <input type="text" id="desdeLugar" placeholder="Cualquier fecha">
-                <button type="button" id="btnLimpiarDesdeLugar" class="btn-limpiar" title="Quitar fecha">&times;</button>
-            </div>
-        </div>
-        <div class="campo">
-            <label for="hastaLugar">Hasta <span class="opcional">(opcional)</span></label>
-            <div class="envoltura-fecha">
-                <input type="text" id="hastaLugar" placeholder="Cualquier fecha">
-                <button type="button" id="btnLimpiarHastaLugar" class="btn-limpiar" title="Quitar fecha">&times;</button>
-            </div>
-        </div>
         <button id="btnBuscarLugar" disabled>Buscar</button>
-        <div class="ayuda-pin">💡 También puedes tocar el botón 📍 (esquina superior derecha del mapa) y luego el punto exacto para buscar ahí.</div>
+        <div class="ayuda-pin" id="ayudaPin">🔒 Primero elige el rango de fechas; después podrás buscar el lugar (o marcarlo con el botón 📍 del mapa).</div>
     </div>
 
     <div id="mensaje"></div>
@@ -997,20 +1016,43 @@
         // AM/PM, hora de Colombia) pero OPCIONALES. Ademas de ocultar el
         // mensaje, onChange muestra u oculta el boton "x" segun haya fecha.
         const configFechaLugar = Object.assign({}, configFecha, {
-            onChange: function(fechasElegidas, texto, instancia) {
+            onChange: function() {
                 ocultarMensaje();
-                const envoltura = instancia.input.closest('.envoltura-fecha');
-                envoltura.classList.toggle('con-valor', fechasElegidas.length > 0);
+                actualizarEstadoLugar();
             }
         });
 
         const pickerDesdeLugar = flatpickr("#desdeLugar", configFechaLugar);
         const pickerHastaLugar = flatpickr("#hastaLugar", configFechaLugar);
 
-        document.getElementById('btnLimpiarDesdeLugar')
-            .addEventListener('click', () => pickerDesdeLugar.clear());
-        document.getElementById('btnLimpiarHastaLugar')
-            .addEventListener('click', () => pickerHastaLugar.clear());
+        // Paso 1 -> paso 2: el lugar solo se habilita cuando hay un rango de
+        // fechas completo y coherente (desde < hasta). Se llama cada vez que
+        // cambia una fecha o la seleccion de lugar.
+        function fechasLugarValidas() {
+            const desde = document.getElementById('desdeLugar').value;
+            const hasta = document.getElementById('hastaLugar').value;
+            return Boolean(desde && hasta && desde < hasta);
+        }
+
+        function actualizarEstadoLugar() {
+            const listas = fechasLugarValidas();
+            const campo = document.getElementById('direccionLugar');
+            campo.disabled = !listas;
+            campo.placeholder = listas ? 'Escribe para buscar...' : 'Primero elige las fechas';
+            document.getElementById('ayudaPin').innerText = listas
+                ? '💡 También puedes tocar el botón 📍 (esquina superior derecha del mapa) y luego el punto exacto para buscar ahí.'
+                : '🔒 Primero elige el rango de fechas; después podrás buscar el lugar (o marcarlo con el botón 📍 del mapa).';
+            if (!listas) {
+                // Sin fechas validas no puede haber lugar activo.
+                if (typeof lugarSeleccionado !== 'undefined' && lugarSeleccionado) {
+                    limpiarBusquedaLugar(false);
+                }
+                if (typeof desactivarModoPin === 'function') desactivarModoPin();
+            }
+            if (typeof botonLugar !== 'undefined') {
+                botonLugar.disabled = !(listas && lugarSeleccionado);
+            }
+        }
 
         // ===== Tercera Parte: utilidades =====
         const mensaje = document.getElementById('mensaje');
@@ -1596,7 +1638,7 @@
             pickerHastaLugar.clear();
             inputDireccion.value = '';
             lugarSeleccionado = null;
-            botonLugar.disabled = true;
+            actualizarEstadoLugar();
             ocultarSugerencias();
             if (typeof envolturaInput !== 'undefined') {
                 envolturaInput.classList.remove('con-texto');
@@ -1687,7 +1729,7 @@
             };
             inputDireccion.value = lugarSeleccionado.display_name;
             envolturaInput.classList.add('con-texto');
-            botonLugar.disabled = false;
+            actualizarEstadoLugar();
             clearTimeout(temporizadorBusqueda);
             ocultarSugerencias();
             ocultarMensaje();
@@ -1754,6 +1796,10 @@
         };
 
         function activarModoPin() {
+            if (!fechasLugarValidas()) {
+                mostrarMensaje('Primero elige el rango de fechas y luego marca el lugar.', 'info');
+                return;
+            }
             modoPinActivo = true;
             if (contenedorControlPin) {
                 contenedorControlPin.classList.add('activo');
@@ -1811,6 +1857,7 @@
         // se ignora y el modo sigue activo para volver a intentarlo.
         map.on('click', function(evento) {
             if (modoActual !== 'lugar' || !modoPinActivo) return;
+            if (!fechasLugarValidas()) return;
             if (mapaMoviendose || Date.now() - finMovimientoMapa < PAUSA_TRAS_MOVER_MS) return;
             colocarPin(evento.latlng);
             desactivarModoPin();
@@ -1858,7 +1905,7 @@
             lugarSeleccionado = lugar;
             inputDireccion.value = lugar.display_name;
             ocultarSugerencias();
-            botonLugar.disabled = false;
+            actualizarEstadoLugar();
         }
 
         // Si el usuario edita el texto despues de haber elegido una opcion,
@@ -1927,7 +1974,7 @@
         // Boton "x": borra el texto, la seleccion, las sugerencias y el
         // resultado que estuviera dibujado en el mapa, para volver a buscar
         // desde cero sin tener que borrar letra por letra.
-        function limpiarBusquedaLugar() {
+        function limpiarBusquedaLugar(enfocar = true) {
             inputDireccion.value = '';
             lugarSeleccionado = null;
             botonLugar.disabled = true;
@@ -1940,7 +1987,7 @@
             quitarPin();
             ultimoLugar = null;
             limpiarResumen();
-            inputDireccion.focus();
+            if (enfocar && !inputDireccion.disabled) inputDireccion.focus();
         }
 
         btnLimpiarLugar.addEventListener('click', limpiarBusquedaLugar);
@@ -2077,11 +2124,16 @@
 
             const lugar = lugarSeleccionado;
 
-            // Rango opcional: cualquiera de los dos puede estar vacio.
+            // Primero fechas, despues lugar: el rango es obligatorio.
             const desde = document.getElementById('desdeLugar').value;
             const hasta = document.getElementById('hastaLugar').value;
 
-            if (desde && hasta && desde >= hasta) {
+            if (!desde || !hasta) {
+                mostrarMensaje('Primero elige las fechas (Desde y Hasta) y luego busca el lugar.', 'error');
+                return;
+            }
+
+            if (desde >= hasta) {
                 // Igual que en "Por fecha": se avisa sin gastar una peticion y
                 // se limpia lo anterior para que no parezca de esta consulta.
                 resultadosLugar.style.display = 'none';
@@ -2092,9 +2144,8 @@
                 return;
             }
 
-            let parametrosFecha = '';
-            if (desde) parametrosFecha += `&desde=${desde.replace(' ', 'T')}`;
-            if (hasta) parametrosFecha += `&hasta=${hasta.replace(' ', 'T')}`;
+            const parametrosFecha =
+                `&desde=${desde.replace(' ', 'T')}&hasta=${hasta.replace(' ', 'T')}`;
             const textoFiltro = describirFiltro(desde, hasta);
 
             botonLugar.disabled = true;
@@ -2123,7 +2174,7 @@
                 dibujarLugar(lat, lon, datos.radio_metros, lugar.display_name, Boolean(lugar.esPin));
                 mostrarVisitas(datos.visitas, lugar.display_name, datos.radio_metros, textoFiltro);
 
-                const enRango = textoFiltro ? ' en el rango seleccionado' : '';
+                const enRango = ' en el rango seleccionado';
 
                 if (datos.total_visitas === 0) {
                     mostrarMensaje(`El vehículo no registró visitas a este lugar${enRango}.`, 'info');
@@ -2141,8 +2192,8 @@
                 console.error(error);
                 mostrarMensaje('No se pudo completar la búsqueda.', 'error');
             } finally {
-                botonLugar.disabled = false;
                 botonLugar.innerText = 'Buscar';
+                actualizarEstadoLugar();
             }
         }
 
