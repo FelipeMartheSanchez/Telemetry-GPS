@@ -672,105 +672,240 @@
             font-weight: 600;
             color: #475569;
         }
+
+        /* ===== Diseño a pantalla completa (igual que la vista en vivo) ===== */
+        html, body { height: 100%; overflow: hidden; }
+        body { display: block; padding: 0; min-height: 0; }
+
+        #map {
+            position: fixed;
+            inset: 0;
+            width: 100%;
+            max-width: none;
+            height: 100%;
+            border-radius: 0;
+            box-shadow: none;
+            border: none;
+            z-index: 0;
+        }
+
+        .panel {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 1100;
+            width: min(380px, calc(100vw - 24px));
+            max-height: calc(100vh - 24px);
+            overflow-y: auto;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid #e2e8f0;
+            border-radius: 18px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+            padding: 14px 16px;
+        }
+
+        .panel-cabecera {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .panel h1 {
+            font-size: 1.05rem;
+            margin: 0;
+            text-align: left;
+        }
+
+        .btn-panel {
+            border: none;
+            background: #e2e8f0;
+            color: #475569;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        .panel.colapsado .panel-cuerpo { display: none; }
+        .panel.colapsado .tabs { margin-bottom: 0; }
+        .panel.colapsado .btn-panel { transform: rotate(180deg); }
+
+        .panel .tabs { margin-bottom: 12px; }
+        .panel .tab { flex: 1; text-align: center; padding: 6px 10px; font-size: 0.82rem; }
+
+        .panel .controles {
+            flex-direction: column;
+            flex-wrap: nowrap;
+            align-items: stretch;
+            justify-content: flex-start;
+            gap: 10px;
+            max-width: none;
+            padding: 0;
+            background: none;
+            border: none;
+            box-shadow: none;
+            margin-bottom: 10px;
+        }
+
+        .panel .campo input,
+        .panel .envoltura-fecha,
+        .panel .envoltura-input { width: 100%; }
+        .panel .sugerencias { min-width: 0; }
+        .panel .ayuda-pin { text-align: left; }
+
+        .panel #mensaje {
+            max-width: none;
+            margin-bottom: 10px;
+            padding: 10px 14px;
+            font-size: 0.82rem;
+        }
+
+        .panel .cards-container {
+            flex-wrap: nowrap;
+            gap: 8px;
+            max-width: none;
+            margin-bottom: 10px;
+        }
+
+        .panel .card {
+            flex: 1;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0;
+            border-radius: 12px;
+            padding: 6px 10px;
+            box-shadow: none;
+        }
+
+        .panel .card-label { font-size: 0.68rem; }
+        .panel .card-value { font-size: 0.85rem; }
+
+        .panel #resultadosLugar {
+            max-width: none;
+            margin: 0;
+            padding: 12px;
+            border-radius: 14px;
+            box-shadow: none;
+            font-size: 0.85rem;
+        }
+
+        .panel #listaVisitas { max-height: 32vh; overflow-y: auto; }
+        .panel .visita-item { flex-direction: column; align-items: flex-start; gap: 2px; }
+
+        /* Leyenda de viajes y barra de animacion: flotan abajo, centradas */
+        .flotante-inferior {
+            position: fixed;
+            left: 50%;
+            bottom: 16px;
+            transform: translateX(-50%);
+            z-index: 1100;
+            width: min(760px, calc(100vw - 110px));
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+
+        .flotante-inferior > * { pointer-events: auto; }
+        .flotante-inferior .leyenda-viajes,
+        .flotante-inferior .barra-animacion { max-width: none; margin-top: 0; }
+
+        /* En pantallas angostas el panel tapa la esquina del boton del pin:
+           se baja a la derecha, encima del zoom. */
+        @media (max-width: 640px) {
+            .leaflet-top.leaflet-right { top: auto; bottom: 110px; }
+        }
     </style>
 </head>
 <body>
 
-    <h1>🕘 Histórico del Recorrido</h1>
-
-    <!-- Navegación entre la vista en vivo y el histórico -->
-    <div class="tabs">
-        <a href="/" class="tab">📡 En vivo</a>
-        <a href="/historial" class="tab activa">🕘 Histórico</a>
-    </div>
-
-    <!-- Sub-pestañas: como se elige que se va a consultar -->
-    <div class="subtabs">
-        <button id="subtabFecha" class="subtab activa">Por fecha</button>
-        <button id="subtabLugar" class="subtab">Por lugar</button>
-    </div>
-
-    <!-- Controles del modo "Por fecha" -->
-    <div class="controles" id="controlesFecha">
-        <div class="campo">
-            <label for="desde">Desde</label>
-            <input type="text" id="desde" placeholder="Selecciona fecha y hora">
-        </div>
-        <div class="campo">
-            <label for="hasta">Hasta</label>
-            <input type="text" id="hasta" placeholder="Selecciona fecha y hora">
-        </div>
-        <button id="btnConsultar">Consultar</button>
-    </div>
-
-    <!-- Controles del modo "Por lugar" (oculto por defecto).
-         Paso 1: el rango de fechas (obligatorio). Paso 2: el lugar, que
-         permanece bloqueado hasta que el rango sea valido. -->
-    <div class="controles" id="controlesLugar" style="display: none;">
-        <div class="campo">
-            <label for="desdeLugar"><span class="paso">1</span> Desde</label>
-            <div class="envoltura-fecha">
-                <input type="text" id="desdeLugar" placeholder="Selecciona fecha y hora">
-            </div>
-        </div>
-        <div class="campo">
-            <label for="hastaLugar"><span class="paso">1</span> Hasta</label>
-            <div class="envoltura-fecha">
-                <input type="text" id="hastaLugar" placeholder="Selecciona fecha y hora">
-            </div>
-        </div>
-        <div class="campo campo-autocompletar" id="campoLugar">
-            <label for="direccionLugar"><span class="paso">2</span> Dirección o lugar</label>
-            <div class="envoltura-input">
-                <input type="text" id="direccionLugar" class="campo-texto"
-                       placeholder="Primero elige las fechas" autocomplete="off" disabled>
-                <button type="button" id="btnLimpiarLugar" class="btn-limpiar" title="Borrar búsqueda">&times;</button>
-            </div>
-            <!-- Lista desplegable de sugerencias, estilo Google Maps -->
-            <div id="listaSugerencias" class="sugerencias"></div>
-        </div>
-        <button id="btnBuscarLugar" disabled>Buscar</button>
-        <div class="ayuda-pin" id="ayudaPin">🔒 Primero elige el rango de fechas; después podrás buscar el lugar (o marcarlo con el botón 📍 del mapa).</div>
-    </div>
-
-    <div id="mensaje"></div>
-
-    <!-- Resumen del recorrido consultado (modo "Por fecha" y ruta de una visita) -->
-    <div class="cards-container">
-        <div class="card">
-            <span class="card-label">Puntos:</span>
-            <span id="totalPuntos" class="card-value">0</span>
-        </div>
-        <div class="card">
-            <span class="card-label">Inicio:</span>
-            <span id="horaInicio" class="card-value">---</span>
-        </div>
-        <div class="card">
-            <span class="card-label">Fin:</span>
-            <span id="horaFin" class="card-value">---</span>
-        </div>
-    </div>
-
+    <!-- Mapa a pantalla completa (igual que la vista en vivo) -->
     <div id="map"></div>
 
-    <!-- Leyenda de viajes: solo se muestra en "Por fecha" cuando la consulta
-         incluye viajes registrados (tabla viajes). Una ficha por viaje. -->
-    <div id="leyendaViajes" class="leyenda-viajes" role="list" aria-label="Viajes de la ruta"></div>
+    <!-- Panel flotante sobre el mapa -->
+    <div class="panel" id="panel">
+        <div class="panel-cabecera">
+            <h1>🕘 Histórico del Recorrido</h1>
+            <button type="button" id="btnPanel" class="btn-panel" aria-expanded="true"
+                    title="Mostrar u ocultar el panel">▾</button>
+        </div>
 
-    <!-- Barra de animacion: aparece al dibujar una ruta. La animacion arranca
-         sola; mover el slider la pausa para recorrer la ruta a mano. -->
-    <div id="barraAnimacion" class="barra-animacion">
-        <button type="button" id="btnAnimacion" class="btn-animacion">⏸ Pausar</button>
-        <input type="range" id="sliderRuta" min="0" max="0" step="1" value="0"
-               aria-label="Posición en la ruta">
-        <span id="etiquetaAnimacion" class="etiqueta-animacion"></span>
+        <!-- Navegación entre la vista en vivo y el histórico -->
+        <div class="tabs">
+            <a href="/" class="tab">📡 En vivo</a>
+            <a href="/historial" class="tab activa">🕘 Histórico</a>
+        </div>
+
+        <div class="panel-cuerpo">
+            <!-- Una sola búsqueda: primero el rango de fechas (obligatorio) y,
+                 dentro de esa misma búsqueda, el lugar (opcional). -->
+            <div class="controles" id="controles">
+                <div class="campo">
+                    <label for="desde"><span class="paso">1</span> Desde</label>
+                    <div class="envoltura-fecha">
+                        <input type="text" id="desde" placeholder="Selecciona fecha y hora">
+                    </div>
+                </div>
+                <div class="campo">
+                    <label for="hasta"><span class="paso">1</span> Hasta</label>
+                    <div class="envoltura-fecha">
+                        <input type="text" id="hasta" placeholder="Selecciona fecha y hora">
+                    </div>
+                </div>
+                <div class="campo campo-autocompletar" id="campoLugar">
+                    <label for="direccionLugar"><span class="paso">2</span> Lugar <span class="opcional">(opcional)</span></label>
+                    <div class="envoltura-input">
+                        <input type="text" id="direccionLugar" class="campo-texto"
+                               placeholder="Primero elige las fechas" autocomplete="off" disabled>
+                        <button type="button" id="btnLimpiarLugar" class="btn-limpiar" title="Borrar lugar">&times;</button>
+                    </div>
+                    <!-- Lista desplegable de sugerencias, estilo Google Maps -->
+                    <div id="listaSugerencias" class="sugerencias"></div>
+                </div>
+                <button id="btnConsultar" disabled>Consultar</button>
+                <div class="ayuda-pin" id="ayudaPin"></div>
+            </div>
+
+            <div id="mensaje"></div>
+
+            <!-- Resumen del recorrido consultado -->
+            <div class="cards-container">
+                <div class="card">
+                    <span class="card-label">Envíos</span>
+                    <span id="totalPuntos" class="card-value">0</span>
+                </div>
+                <div class="card">
+                    <span class="card-label">Inicio</span>
+                    <span id="horaInicio" class="card-value">---</span>
+                </div>
+                <div class="card">
+                    <span class="card-label">Fin</span>
+                    <span id="horaFin" class="card-value">---</span>
+                </div>
+            </div>
+
+            <!-- Resultados de la búsqueda con lugar: nombre del sitio y visitas
+                 (la más reciente primero). -->
+            <div id="resultadosLugar">
+                <div id="encabezadoLugar"></div>
+                <div id="listaVisitas"></div>
+            </div>
+        </div>
     </div>
 
-    <!-- Resultados del modo "Por lugar": nombre del sitio y lista de visitas.
-         Va debajo del mapa; la visita mas reciente aparece primero. -->
-    <div id="resultadosLugar">
-        <div id="encabezadoLugar"></div>
-        <div id="listaVisitas"></div>
+    <!-- Parte inferior flotante: leyenda de viajes y barra de animación -->
+    <div class="flotante-inferior">
+        <div id="leyendaViajes" class="leyenda-viajes" role="list" aria-label="Viajes de la ruta"></div>
+
+        <div id="barraAnimacion" class="barra-animacion">
+            <button type="button" id="btnAnimacion" class="btn-animacion">⏸ Pausar</button>
+            <input type="range" id="sliderRuta" min="0" max="0" step="1" value="0"
+                   aria-label="Posición en la ruta">
+            <span id="etiquetaAnimacion" class="etiqueta-animacion"></span>
+        </div>
     </div>
 
     <script>
@@ -778,7 +913,8 @@
         // Esta página NO abre Socket.IO. El histórico funciona al revés que la
         // vista en vivo: aquí el navegador PIDE los datos (pull) en lugar de
         // recibirlos empujados por el servidor (push).
-        const map = L.map('map').setView([4.570868, -74.297333], 6);
+        const map = L.map('map', { zoomControl: false }).setView([4.570868, -74.297333], 6);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors'
@@ -800,7 +936,7 @@
         const capaPin = L.layerGroup().addTo(map);
 
         // 'fecha' o 'lugar': el clic en el mapa solo coloca pines en 'lugar'.
-        let modoActual = 'fecha';
+        let modoActual = 'lugar';
 
         // Lugar de la ultima busqueda terminada ({lat, lon, radio}). Se usa
         // para resaltar, en la ruta de una visita, el tramo que paso por ahi.
@@ -1006,31 +1142,19 @@
             minuteIncrement: 1,
             onChange: function() {
                 ocultarMensaje();
+                actualizarEstadoLugar();
             }
         };
 
         const pickerDesde = flatpickr("#desde", configFecha);
         const pickerHasta = flatpickr("#hasta", configFecha);
 
-        // Selectores del modo "Por lugar": misma configuracion (12 horas,
-        // AM/PM, hora de Colombia) pero OPCIONALES. Ademas de ocultar el
-        // mensaje, onChange muestra u oculta el boton "x" segun haya fecha.
-        const configFechaLugar = Object.assign({}, configFecha, {
-            onChange: function() {
-                ocultarMensaje();
-                actualizarEstadoLugar();
-            }
-        });
-
-        const pickerDesdeLugar = flatpickr("#desdeLugar", configFechaLugar);
-        const pickerHastaLugar = flatpickr("#hastaLugar", configFechaLugar);
-
         // Paso 1 -> paso 2: el lugar solo se habilita cuando hay un rango de
         // fechas completo y coherente (desde < hasta). Se llama cada vez que
         // cambia una fecha o la seleccion de lugar.
         function fechasLugarValidas() {
-            const desde = document.getElementById('desdeLugar').value;
-            const hasta = document.getElementById('hastaLugar').value;
+            const desde = document.getElementById('desde').value;
+            const hasta = document.getElementById('hasta').value;
             return Boolean(desde && hasta && desde < hasta);
         }
 
@@ -1038,10 +1162,10 @@
             const listas = fechasLugarValidas();
             const campo = document.getElementById('direccionLugar');
             campo.disabled = !listas;
-            campo.placeholder = listas ? 'Escribe para buscar...' : 'Primero elige las fechas';
+            campo.placeholder = listas ? 'Escribe un lugar para filtrar...' : 'Primero elige las fechas';
             document.getElementById('ayudaPin').innerText = listas
-                ? '💡 También puedes tocar el botón 📍 (esquina superior derecha del mapa) y luego el punto exacto para buscar ahí.'
-                : '🔒 Primero elige el rango de fechas; después podrás buscar el lugar (o marcarlo con el botón 📍 del mapa).';
+                ? '💡 El lugar es opcional: sin lugar verás todo el recorrido del rango. También puedes tocar 📍 en el mapa y marcar el punto exacto.'
+                : '🔒 Elige primero el rango de fechas. Después podrás, si quieres, filtrar por un lugar.';
             if (!listas) {
                 // Sin fechas validas no puede haber lugar activo.
                 if (typeof lugarSeleccionado !== 'undefined' && lugarSeleccionado) {
@@ -1049,8 +1173,8 @@
                 }
                 if (typeof desactivarModoPin === 'function') desactivarModoPin();
             }
-            if (typeof botonLugar !== 'undefined') {
-                botonLugar.disabled = !(listas && lugarSeleccionado);
+            if (typeof boton !== 'undefined') {
+                boton.disabled = !listas;
             }
         }
 
@@ -1257,7 +1381,7 @@
             const indice = Math.round(p);
             sliderRuta.value = indice;
             etiquetaAnimacion.textContent =
-                `🕐 ${puntosActuales[indice].hora}  ·  punto ${indice + 1} de ${n}`;
+                `🕐 ${puntosActuales[indice].hora}  ·  envío ${indice + 1} de ${n}`;
             animPosicion = p;
         }
 
@@ -1566,6 +1690,11 @@
             const desdeIso = desde.replace(' ', 'T');
             const hastaIso = hasta.replace(' ', 'T');
 
+            // Busqueda solo por fechas: no hay lugar que mostrar.
+            resultadosLugar.style.display = 'none';
+            capaLugar.clearLayers();
+            ultimoLugar = null;
+
             boton.disabled = true;
             boton.innerText = 'Consultando...';
             ocultarMensaje();
@@ -1599,7 +1728,7 @@
 
                 if (datos.truncado) {
                     mostrarMensaje(
-                        'El rango tiene demasiados puntos y se recortó. ' +
+                        'El rango tiene demasiados envíos y se recortó. ' +
                         'Reduce la ventana de tiempo para ver el recorrido completo.',
                         'info'
                     );
@@ -1610,56 +1739,38 @@
                 limpiarMapaYResumen();
                 mostrarMensaje('No se pudo conectar con el servidor.', 'error');
             } finally {
-                boton.disabled = false;
                 boton.innerText = 'Consultar';
+                actualizarEstadoLugar();
             }
         }
 
-        boton.addEventListener('click', consultar);
-
-        // ===== Sexta Parte: sub-pestañas Por fecha / Por lugar =====
-        const subtabFecha = document.getElementById('subtabFecha');
-        const subtabLugar = document.getElementById('subtabLugar');
-        const controlesFecha = document.getElementById('controlesFecha');
-        const controlesLugar = document.getElementById('controlesLugar');
-        const resultadosLugar = document.getElementById('resultadosLugar');
-
-        function cambiarModo(nuevoModo) {
-            modoActual = nuevoModo;
-            ocultarMensaje();
-            limpiarCapaRecorrido();
-            capaLugar.clearLayers();
-            quitarPin();
-            ultimoLugar = null;
-            limpiarResumen();
-            resultadosLugar.style.display = 'none';
-            // Al cambiar de modo tambien se vacia el rango opcional de "Por lugar".
-            pickerDesdeLugar.clear();
-            pickerHastaLugar.clear();
-            inputDireccion.value = '';
-            lugarSeleccionado = null;
-            actualizarEstadoLugar();
-            ocultarSugerencias();
-            if (typeof envolturaInput !== 'undefined') {
-                envolturaInput.classList.remove('con-texto');
+        // Un solo boton: con lugar elegido busca visitas a ese lugar dentro
+        // del rango; sin lugar muestra el recorrido del rango.
+        function consultarTodo() {
+            if (inputDireccion.value.trim() && !lugarSeleccionado) {
+                mostrarMensaje('Elige un lugar de la lista de sugerencias, o borra el campo para ver todo el recorrido.', 'error');
+                return;
             }
-
-            const esFecha = nuevoModo === 'fecha';
-            subtabFecha.classList.toggle('activa', esFecha);
-            subtabLugar.classList.toggle('activa', !esFecha);
-            controlesFecha.style.display = esFecha ? 'flex' : 'none';
-            controlesLugar.style.display = esFecha ? 'none' : 'flex';
-
-            // El boton del pin solo existe en el modo "Por lugar".
-            if (esFecha) {
-                ocultarControlPin();
+            if (lugarSeleccionado) {
+                buscarPorLugar();
             } else {
-                mostrarControlPin();
+                consultar();
             }
         }
 
-        subtabFecha.addEventListener('click', () => cambiarModo('fecha'));
-        subtabLugar.addEventListener('click', () => cambiarModo('lugar'));
+        boton.addEventListener('click', consultarTodo);
+
+        // ===== Sexta Parte: panel =====
+        const resultadosLugar = document.getElementById('resultadosLugar');
+        const panel = document.getElementById('panel');
+        const btnPanel = document.getElementById('btnPanel');
+
+        function colapsarPanel(colapsar) {
+            panel.classList.toggle('colapsado', colapsar);
+            btnPanel.setAttribute('aria-expanded', String(!colapsar));
+        }
+
+        btnPanel.addEventListener('click', () => colapsarPanel(!panel.classList.contains('colapsado')));
 
         // ===== Séptima Parte: modo "Por lugar" =====
         //
@@ -1686,7 +1797,7 @@
         // texto de la direccion, solo lat/lon ya resueltos.
 
         const inputDireccion = document.getElementById('direccionLugar');
-        const botonLugar = document.getElementById('btnBuscarLugar');
+        const botonLugar = boton;
         const encabezadoLugar = document.getElementById('encabezadoLugar');
         const listaVisitas = document.getElementById('listaVisitas');
         const listaSugerencias = document.getElementById('listaSugerencias');
@@ -2045,15 +2156,11 @@
                 item.className = 'visita-item';
                 item.innerHTML = `
                     <span class="visita-hora">🕐 ${visita.entrada} → ${visita.salida}</span>
-                    <span class="visita-detalle">${visita.puntos} punto(s)</span>
+                    <span class="visita-detalle">${visita.puntos} envío(s)</span>
                 `;
                 item.addEventListener('click', function() {
-                    // La lista esta debajo del mapa: se sube hasta el mapa para
-                    // que el usuario vea la ruta que se va a dibujar.
-                    document.getElementById('map').scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'start'
-                    });
+                    // En pantallas angostas el panel se pliega para dejar ver la ruta.
+                    if (window.innerWidth < 640) colapsarPanel(true);
                     verRutaDeVisita(visita);
                 });
                 listaVisitas.appendChild(item);
@@ -2108,8 +2215,8 @@
         // Texto legible del rango elegido, tomado de lo que el usuario VE en
         // los campos (formato dd/mm/aaaa hh:mm AM/PM). Vacio si no hay rango.
         function describirFiltro(desde, hasta) {
-            const textoDesde = pickerDesdeLugar.altInput.value;
-            const textoHasta = pickerHastaLugar.altInput.value;
+            const textoDesde = pickerDesde.altInput.value;
+            const textoHasta = pickerHasta.altInput.value;
             if (desde && hasta) return `Entre ${textoDesde} y ${textoHasta}`;
             if (desde) return `Desde ${textoDesde}`;
             if (hasta) return `Hasta ${textoHasta}`;
@@ -2125,8 +2232,8 @@
             const lugar = lugarSeleccionado;
 
             // Primero fechas, despues lugar: el rango es obligatorio.
-            const desde = document.getElementById('desdeLugar').value;
-            const hasta = document.getElementById('hastaLugar').value;
+            const desde = document.getElementById('desde').value;
+            const hasta = document.getElementById('hasta').value;
 
             if (!desde || !hasta) {
                 mostrarMensaje('Primero elige las fechas (Desde y Hasta) y luego busca el lugar.', 'error');
@@ -2183,7 +2290,7 @@
                     // usuario sepa donde buscarla.
                     mostrarMensaje(
                         `Se encontraron ${datos.total_visitas} visita(s)${enRango}, de la más reciente a la más antigua. ` +
-                        'La lista está debajo del mapa; toca una para ver su ruta.',
+                        'Toca una en el panel para ver su ruta.',
                         'info'
                     );
                 }
@@ -2192,12 +2299,15 @@
                 console.error(error);
                 mostrarMensaje('No se pudo completar la búsqueda.', 'error');
             } finally {
-                botonLugar.innerText = 'Buscar';
+                botonLugar.innerText = 'Consultar';
                 actualizarEstadoLugar();
             }
         }
 
-        botonLugar.addEventListener('click', buscarPorLugar);
+        // Estado inicial: el lugar y el boton esperan a que haya fechas, y el
+        // boton del pin ya esta disponible (se habilita al tener fechas).
+        mostrarControlPin();
+        actualizarEstadoLugar();
     </script>
 </body>
 </html>
