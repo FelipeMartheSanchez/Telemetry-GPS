@@ -49,6 +49,7 @@
             z-index: 1100;               /* sobre el mapa y la pantalla de carga */
             width: min(340px, calc(100vw - 24px));
             max-height: calc(100vh - 24px);
+            max-height: calc(100dvh - 24px);
             overflow-y: auto;
             background: rgba(255, 255, 255, 0.96);
             border: 1px solid #e2e8f0;
@@ -161,7 +162,14 @@
         /* En pantallas angostas el panel ocupa casi todo el ancho: el recuadro
            de marca pasa abajo para no taparse con el. */
         @media (max-width: 640px) {
-            .marca { top: auto; bottom: 28px; }
+            .marca {
+                top: auto;
+                bottom: 22px;
+                bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+                padding: 4px 12px 5px;
+            }
+            .marca-logo { width: 120px; }
+            .marca-instancia { font-size: 0.62rem; }
         }
 
         /* Dirección y barrio donde está el vehículo */
