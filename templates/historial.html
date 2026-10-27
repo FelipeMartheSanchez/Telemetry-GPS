@@ -701,21 +701,59 @@
             padding: 14px 16px;
         }
 
+
+
+        /* Recuadro de marca (arriba, al centro): nombre de la empresa y,
+           debajo, el nombre de esta instancia (NOMBRE_PAGINA del .env). */
+        .marca {
+            position: fixed;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1100;
+            padding: 6px 18px 7px;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+            text-align: center;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+
+        .marca-logo {
+            display: block;
+            width: 190px;
+            max-width: 100%;
+            height: auto;
+            margin: 0 auto 2px;
+        }
+
+        .marca-instancia {
+            font-size: 0.66rem;
+            font-weight: 500;
+            line-height: 1.2;
+            color: #64748b;
+        }
+
+        /* Cabecera del panel: el selector de modo va primero, con el boton
+           para plegar el panel a su lado (igual en En vivo e Histórico). */
         .panel-cabecera {
             display: flex;
             align-items: center;
-            justify-content: space-between;
             gap: 8px;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
         }
 
-        .panel h1 {
-            font-size: 1.05rem;
-            margin: 0;
-            text-align: left;
+        .panel-cabecera .selector-modo {
+            flex: 1;
+            min-width: 0;
+            width: auto;
+            margin-bottom: 0;
         }
 
         .btn-panel {
+            flex: none;
             border: none;
             background: #e2e8f0;
             color: #475569;
@@ -724,13 +762,18 @@
             border-radius: 50%;
             font-size: 0.9rem;
             cursor: pointer;
+            transition: transform 0.2s ease;
         }
 
         .panel.colapsado .panel-cuerpo { display: none; }
-        .panel.colapsado .selector-modo { margin-bottom: 0; }
+        .panel.colapsado .panel-cabecera { margin-bottom: 0; }
         .panel.colapsado .btn-panel { transform: rotate(180deg); }
 
-        .panel .selector-modo { margin-bottom: 12px; width: 100%; }
+        /* En pantallas angostas el panel ocupa casi todo el ancho: el recuadro
+           de marca pasa abajo para no taparse con el. */
+        @media (max-width: 640px) {
+            .marca { top: auto; bottom: 28px; }
+        }
 
         .panel .controles {
             flex-direction: column;
@@ -814,6 +857,12 @@
         @media (max-width: 640px) {
             .leaflet-top.leaflet-right { top: auto; bottom: 110px; }
         }
+
+        /* El recuadro de marca ocupa el borde inferior en pantallas angostas:
+           la leyenda y la barra de animacion suben para no taparse. */
+        @media (max-width: 640px) {
+            .flotante-inferior { bottom: 82px; }
+        }
     </style>
 </head>
 <body>
@@ -821,19 +870,22 @@
     <!-- Mapa a pantalla completa (igual que la vista en vivo) -->
     <div id="map"></div>
 
+    <!-- Marca: nombre de la empresa y de esta instancia -->
+    <div class="marca">
+        <img class="marca-logo" src="{{ url_for('static', filename='trucktrace-logo.jpg') }}" alt="TruckTrace">
+        <div class="marca-instancia">{{ nombre_pagina }}</div>
+    </div>
+
     <!-- Panel flotante sobre el mapa -->
     <div class="panel" id="panel">
         <div class="panel-cabecera">
-            <h1>🕘 Histórico del Recorrido</h1>
+            <select class="selector-modo" onchange="window.location.href=this.value;" aria-label="Cambiar de modo">
+                <option value="/">📡 Modo: En vivo</option>
+                <option value="/historial" selected>🕘 Modo: Histórico</option>
+            </select>
             <button type="button" id="btnPanel" class="btn-panel" aria-expanded="true"
                     title="Mostrar u ocultar el panel">▾</button>
         </div>
-
-        <!-- Navegación entre la vista en vivo y el histórico -->
-        <select class="selector-modo" onchange="window.location.href=this.value;">
-            <option value="/">📡 Modo: En vivo</option>
-            <option value="/historial" selected>🕘 Modo: Histórico</option>
-        </select>
 
         <div class="panel-cuerpo">
             <!-- Una sola búsqueda: primero el rango de fechas (obligatorio) y,
