@@ -476,29 +476,88 @@
         /* Leyenda de viajes (modo "Por fecha"): una ficha por viaje, con el
            color con el que se dibuja en el mapa. El texto va en tinta normal;
            solo la muestra lleva el color del viaje. */
-        .leyenda-viajes {
+        /* Panel de viajes: una cabecera siempre visible (y plegable) y la
+           lista de fichas debajo, del viaje MAS RECIENTE al mas antiguo. En
+           pantallas anchas es un panel lateral derecho; en angostas, una hoja
+           sobre la barra de animacion (ver los @media del final). */
+        .panel-viajes {
             display: none;
-            flex-wrap: wrap;
-            gap: 8px 10px;
-            max-width: 900px;
-            width: 100%;
-            margin-top: 12px;
-            padding: 10px 14px;
-            background: #ffffff;
+            flex-direction: column;
+            background: rgba(255, 255, 255, 0.96);
             border: 1px solid #e2e8f0;
             border-radius: 16px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+            overflow: hidden;
+        }
+
+        .viajes-cabecera {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            width: 100%;
+            min-height: 44px;
+            padding: 8px 14px;
+            border: none;
+            background: transparent;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #1e293b;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .viajes-contador {
+            font-weight: 500;
+            color: #64748b;
+        }
+
+        .viajes-flecha {
+            flex: none;
+            display: grid;
+            place-items: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #e2e8f0;
+            color: #475569;
+            font-size: 0.9rem;
+            transition: transform 0.2s ease;
+        }
+
+        .panel-viajes.colapsado .viajes-flecha { transform: rotate(180deg); }
+        .panel-viajes.colapsado .leyenda-viajes { display: none; }
+
+        .leyenda-viajes {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            min-height: 0;
+            max-height: 40vh;
+            max-height: 40dvh;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding: 2px 12px 12px;
         }
 
         .ficha-viaje {
-            display: inline-flex;
+            display: flex;
             align-items: center;
             gap: 8px;
-            padding: 4px 10px;
+            min-width: 0;
+            padding: 6px 12px;
             border: 1px solid #e2e8f0;
             border-radius: 999px;
-            font-size: 0.78rem;
+            font-size: 0.8rem;
             color: #1e293b;
+        }
+
+        /* El texto se recorta con "..." si no cabe; el titulo muestra todo */
+        .ficha-viaje > span:last-child {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .muestra-viaje {
@@ -712,6 +771,7 @@
             z-index: 1100;
             width: min(380px, calc(100vw - 24px));
             max-height: calc(100vh - 24px);
+            max-height: calc(100dvh - 24px);
             overflow-y: auto;
             background: rgba(255, 255, 255, 0.96);
             border: 1px solid #e2e8f0;
@@ -791,7 +851,14 @@
         /* En pantallas angostas el panel ocupa casi todo el ancho: el recuadro
            de marca pasa abajo para no taparse con el. */
         @media (max-width: 640px) {
-            .marca { top: auto; bottom: 28px; }
+            .marca {
+                top: auto;
+                bottom: 22px;
+                bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+                padding: 4px 12px 5px;
+            }
+            .marca-logo { width: 120px; }
+            .marca-instancia { font-size: 0.62rem; }
         }
 
         .panel .controles {
@@ -882,11 +949,17 @@
         .panel .visita-item { flex-direction: column; align-items: flex-start; gap: 2px; }
 
         /* Leyenda de viajes y barra de animacion: flotan abajo, centradas */
+        /* Se centra con left/right:0 + margin:auto, SIN transform: un
+           transform convertiria a este contenedor en el "marco" de sus hijos
+           fixed y el panel de viajes no podria anclarse al borde derecho de
+           la ventana. */
         .flotante-inferior {
             position: fixed;
-            left: 50%;
+            left: 0;
+            right: 0;
+            margin: 0 auto;
             bottom: 16px;
-            transform: translateX(-50%);
+            bottom: calc(16px + env(safe-area-inset-bottom, 0px));
             z-index: 1100;
             width: min(760px, calc(100vw - 110px));
             display: flex;
@@ -896,7 +969,6 @@
         }
 
         .flotante-inferior > * { pointer-events: auto; }
-        .flotante-inferior .leyenda-viajes,
         .flotante-inferior .barra-animacion { max-width: none; margin-top: 0; }
 
         /* En pantallas angostas el panel tapa la esquina del boton del pin:
@@ -905,10 +977,45 @@
             .leaflet-top.leaflet-right { top: auto; bottom: 110px; }
         }
 
-        /* El recuadro de marca ocupa el borde inferior en pantallas angostas:
-           la leyenda y la barra de animacion suben para no taparse. */
+        /* El recuadro de marca (ya mas pequeno) ocupa el borde inferior en
+           pantallas angostas: la hoja de viajes y la barra suben para no
+           taparse. 16px en los campos evita el zoom automatico de iOS. */
         @media (max-width: 640px) {
-            .flotante-inferior { bottom: 82px; }
+            /* Alineado a la izquierda (como el panel de filtros) y dejando
+               libre a la derecha la columna de los botones del mapa. */
+            .flotante-inferior {
+                left: 12px;
+                right: 60px;
+                margin: 0;
+                width: auto;
+                bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+            }
+            /* Fichas mas compactas; si aun asi el texto no cabe en una
+               linea, baja a la siguiente (en el celular no hay "pasar el
+               mouse" para ver el titulo). */
+            .ficha-viaje { border-radius: 16px; padding: 6px 10px; gap: 6px; font-size: 0.76rem; }
+            .muestra-viaje { width: 18px; }
+            .ficha-viaje > span:last-child { white-space: normal; }
+            /* Barra de animacion mas compacta */
+            .barra-animacion { padding: 10px 12px; gap: 8px 10px; }
+            .btn-animacion { min-width: 0; min-height: 44px; padding: 8px 16px; }
+            #sliderRuta { flex: 1 1 90px; }
+            .panel .campo input,
+            .panel .selector-modo { font-size: 16px; }
+        }
+
+        /* Pantallas anchas: la lista de viajes es un panel lateral derecho,
+           debajo del boton del pin y encima del zoom. */
+        @media (min-width: 900px) {
+            .panel-viajes {
+                position: fixed;
+                top: 60px;
+                right: 12px;
+                width: 300px;
+                max-height: calc(100vh - 170px);
+                max-height: calc(100dvh - 170px);
+            }
+            .panel-viajes .leyenda-viajes { max-height: none; flex: 1 1 auto; }
         }
     </style>
 </head>
@@ -999,7 +1106,14 @@
 
     <!-- Parte inferior flotante: leyenda de viajes y barra de animación -->
     <div class="flotante-inferior">
-        <div id="leyendaViajes" class="leyenda-viajes" role="list" aria-label="Viajes de la ruta"></div>
+        <div id="panelViajes" class="panel-viajes">
+            <button type="button" id="btnViajes" class="viajes-cabecera" aria-expanded="true"
+                    aria-controls="leyendaViajes" title="Mostrar u ocultar la lista de viajes">
+                <span>Viajes <span id="contadorViajes" class="viajes-contador"></span></span>
+                <span class="viajes-flecha" aria-hidden="true">▾</span>
+            </button>
+            <div id="leyendaViajes" class="leyenda-viajes" role="list" aria-label="Viajes de la ruta"></div>
+        </div>
 
         <div id="barraAnimacion" class="barra-animacion">
             <button type="button" id="btnAnimacion" class="btn-animacion">⏸ Pausar</button>
@@ -1078,10 +1192,12 @@
 
         // ===== Segmentacion de la ruta por viaje (modo "Por fecha") =====
         // Cada viaje de la tabla viajes se dibuja con un color propio. Los
-        // colores van en orden fijo (el viaje 1 siempre azul, el 2 siempre
-        // naranja...) y NO se reciclan: del noveno viaje en adelante todos
-        // comparten un solo color ("Otros viajes"), porque repetir uno de los
-        // 8 haria creer que son el mismo viaje. Paleta validada para
+        // colores van en orden fijo (el viaje MAS RECIENTE siempre azul, el
+        // anterior siempre naranja...) y NO se reciclan: los viajes mas
+        // antiguos que los 8 mas recientes comparten un solo color ("Otros
+        // viajes"), porque repetir uno de los 8 haria creer que son el mismo
+        // viaje. El numero del viaje no cambia (el 1 es el primero en el
+        // tiempo). Paleta validada para
         // daltonismo y contraste (dataviz/validate_palette.js).
         const PALETA_VIAJES = [
             '#2563eb', '#ea580c', '#0d9488', '#9333ea',
@@ -1089,11 +1205,14 @@
         ];
         const COLOR_RUTA_UNICA = '#2563eb';    // ruta sin viajes (Por lugar, o sin marcas)
         const COLOR_SIN_VIAJE = '#94a3b8';     // puntos fuera de todo viaje
-        const COLOR_OTROS_VIAJES = '#334155';  // viajes del 9 en adelante
+        const COLOR_OTROS_VIAJES = '#334155';  // viajes mas antiguos que los 8 recientes
 
         // id de viaje -> { numero, color, etiqueta }, para el hover y la leyenda
         let infoViajes = new Map();
         const leyendaViajes = document.getElementById('leyendaViajes');
+        const panelViajes = document.getElementById('panelViajes');
+        const btnViajes = document.getElementById('btnViajes');
+        const contadorViajes = document.getElementById('contadorViajes');
 
         // Leyenda del tramo resaltado: un control de Leaflet que solo se
         // agrega al mapa cuando hay tramo resaltado y se quita al limpiar.
@@ -1142,6 +1261,7 @@
             cachePixeles = null;
         }
 
+        // indice: posicion contando desde el viaje MAS RECIENTE (0 = el ultimo).
         function colorDeViaje(indice) {
             return indice < PALETA_VIAJES.length ? PALETA_VIAJES[indice] : COLOR_OTROS_VIAJES;
         }
@@ -1188,6 +1308,7 @@
             const ficha = document.createElement('span');
             ficha.className = 'ficha-viaje';
             ficha.setAttribute('role', 'listitem');
+            ficha.title = texto;
             const muestra = document.createElement('span');
             muestra.className = 'muestra-viaje';
             muestra.style.background = color;
@@ -1198,22 +1319,50 @@
             leyendaViajes.appendChild(ficha);
         }
 
+        // 'viajes' llega en orden cronologico (el mas antiguo primero). La
+        // lista se muestra al reves: el mas reciente arriba y el mas antiguo
+        // abajo. Los 8 colores son para los 8 mas recientes; el resto va junto
+        // en "Otros N viajes", al final de la lista.
         function mostrarLeyendaViajes(viajes, haySinViaje) {
             leyendaViajes.replaceChildren();
-            viajes.forEach(function(v, i) {
-                if (i < PALETA_VIAJES.length) agregarFicha(colorDeViaje(i), infoViajes.get(v.id).etiqueta);
-            });
-            const extra = viajes.length - PALETA_VIAJES.length;
-            if (extra > 0) agregarFicha(COLOR_OTROS_VIAJES, `Otros ${extra} viajes`);
+            const total = viajes.length;
+            for (let r = 0; r < total && r < PALETA_VIAJES.length; r++) {
+                const v = viajes[total - 1 - r];
+                agregarFicha(colorDeViaje(r), infoViajes.get(v.id).etiqueta);
+            }
+            const extra = total - PALETA_VIAJES.length;
+            if (extra > 0) {
+                agregarFicha(COLOR_OTROS_VIAJES, `Otros ${extra} ${extra === 1 ? 'viaje' : 'viajes'}`);
+            }
             if (haySinViaje) agregarFicha(COLOR_SIN_VIAJE, 'Sin viaje registrado');
-            leyendaViajes.style.display = 'flex';
+            contadorViajes.textContent = `(${total})`;
+            panelViajes.style.display = 'flex';
+            // PC: abierto. Celular: plegado, para no tapar el mapa.
+            colapsarViajes(esPantallaAngosta());
         }
 
         function ocultarLeyendaViajes() {
             leyendaViajes.replaceChildren();
-            leyendaViajes.style.display = 'none';
+            panelViajes.style.display = 'none';
             infoViajes = new Map();
         }
+
+        // Por debajo de 900 px el panel de viajes es una hoja inferior y
+        // comparte pantalla con el panel de filtros: solo uno abierto a la vez.
+        function esPantallaAngosta() {
+            return window.matchMedia('(max-width: 899px)').matches;
+        }
+
+        function colapsarViajes(colapsar) {
+            panelViajes.classList.toggle('colapsado', colapsar);
+            btnViajes.setAttribute('aria-expanded', String(!colapsar));
+        }
+
+        btnViajes.addEventListener('click', function() {
+            const abrir = panelViajes.classList.contains('colapsado');
+            colapsarViajes(!abrir);
+            if (abrir && esPantallaAngosta()) colapsarPanel(true);
+        });
 
         // Formula de Haversine (la misma de distancia_metros() en app.py):
         // distancia en metros entre dos coordenadas sobre la esfera terrestre.
@@ -1656,7 +1805,7 @@
                 viajes.forEach(function(v, i) {
                     infoViajes.set(v.id, {
                         numero: i + 1,
-                        color: colorDeViaje(i),
+                        color: colorDeViaje(viajes.length - 1 - i),
                         etiqueta: etiquetaViaje(i + 1, v)
                     });
                 });
@@ -1888,7 +2037,11 @@
             btnPanel.setAttribute('aria-expanded', String(!colapsar));
         }
 
-        btnPanel.addEventListener('click', () => colapsarPanel(!panel.classList.contains('colapsado')));
+        btnPanel.addEventListener('click', function() {
+            const abrir = panel.classList.contains('colapsado');
+            colapsarPanel(!abrir);
+            if (abrir && esPantallaAngosta()) colapsarViajes(true);
+        });
 
         // ===== Séptima Parte: modo "Por lugar" =====
         //
