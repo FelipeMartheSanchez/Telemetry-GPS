@@ -190,10 +190,10 @@
 
         .ubicacion .dato-valor + .dato-etiqueta { margin-top: 6px; }
 
-        /* Fecha, hora y puntos */
+        /* Fecha y hora */
         .datos {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(2, 1fr);
             gap: 8px;
             margin-bottom: 8px;
         }
@@ -207,7 +207,7 @@
 
         .datos .dato-valor { font-size: 0.8rem; }
 
-        /* Desplegable de latitud y longitud */
+        /* Desplegable "Opciones avanzadas": envíos, latitud y longitud */
         details.coordenadas {
             border: 1px solid #e2e8f0;
             border-radius: 12px;
@@ -226,6 +226,8 @@
         details.coordenadas summary::-webkit-details-marker { display: none; }
         details.coordenadas summary::before { content: '▸ '; }
         details.coordenadas[open] summary::before { content: '▾ '; }
+
+        .coordenadas-cuerpo .fila-completa { grid-column: 1 / -1; }
 
         .coordenadas-cuerpo {
             display: grid;
@@ -477,13 +479,13 @@
         <div class="datos">
             <div><div class="dato-etiqueta">Fecha</div><div id="fecha" class="dato-valor">---</div></div>
             <div><div class="dato-etiqueta">Hora COL</div><div id="hora_col" class="dato-valor">---</div></div>
-            <div><div class="dato-etiqueta">Envíos</div><div id="puntos" class="dato-valor">0</div></div>
         </div>
 
-        <!-- Latitud y longitud: ocultas hasta que el usuario las pide -->
+        <!-- Opciones avanzadas: envíos, latitud y longitud, ocultos hasta que el usuario los pide -->
         <details class="coordenadas">
-            <summary>Ver latitud y longitud</summary>
+            <summary>Opciones avanzadas</summary>
             <div class="coordenadas-cuerpo">
+                <div class="fila-completa"><div class="dato-etiqueta">Envíos</div><div id="puntos" class="dato-valor">0</div></div>
                 <div><div class="dato-etiqueta">Latitud</div><div id="lat" class="dato-valor">---</div></div>
                 <div><div class="dato-etiqueta">Longitud</div><div id="lon" class="dato-valor">---</div></div>
             </div>

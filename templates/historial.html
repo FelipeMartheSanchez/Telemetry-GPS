@@ -838,6 +838,34 @@
             box-shadow: none;
         }
 
+        /* Desplegable "Opciones avanzadas" */
+        details.avanzadas {
+            margin-bottom: 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            background: #f8fafc;
+        }
+
+        details.avanzadas summary {
+            cursor: pointer;
+            padding: 8px 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #2563eb;
+            list-style: none;
+        }
+
+        details.avanzadas summary::-webkit-details-marker { display: none; }
+        details.avanzadas summary::before { content: '▸ '; }
+        details.avanzadas[open] summary::before { content: '▾ '; }
+
+        .avanzadas-cuerpo {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            padding: 0 12px 10px;
+        }
+
         .panel .card-label { font-size: 0.68rem; }
         .panel .card-value { font-size: 0.85rem; }
 
@@ -942,10 +970,6 @@
             <!-- Resumen del recorrido consultado -->
             <div class="cards-container">
                 <div class="card">
-                    <span class="card-label">Envíos</span>
-                    <span id="totalPuntos" class="card-value">0</span>
-                </div>
-                <div class="card">
                     <span class="card-label">Inicio</span>
                     <span id="horaInicio" class="card-value">---</span>
                 </div>
@@ -954,6 +978,15 @@
                     <span id="horaFin" class="card-value">---</span>
                 </div>
             </div>
+
+            <!-- Opciones avanzadas: el número de envíos queda oculto hasta que se pide -->
+            <details class="avanzadas">
+                <summary>Opciones avanzadas</summary>
+                <div class="avanzadas-cuerpo">
+                    <span class="card-label">Envíos</span>
+                    <span id="totalPuntos" class="card-value">0</span>
+                </div>
+            </details>
 
             <!-- Resultados de la búsqueda con lugar: nombre del sitio y visitas
                  (la más reciente primero). -->
