@@ -540,16 +540,47 @@
             padding: 2px 12px 12px;
         }
 
+        /* Cada ficha es un boton: tocarla muestra solo ese viaje. */
         .ficha-viaje {
             display: flex;
             align-items: center;
             gap: 8px;
+            width: 100%;
             min-width: 0;
+            min-height: 40px;
             padding: 6px 12px;
             border: 1px solid #e2e8f0;
             border-radius: 999px;
+            background: #ffffff;
+            font-family: inherit;
             font-size: 0.8rem;
             color: #1e293b;
+            text-align: left;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .ficha-viaje:hover { background: #f1f5f9; }
+
+        .ficha-viaje.activa {
+            border-color: #2563eb;
+            background: #eff6ff;
+            box-shadow: inset 0 0 0 1px #2563eb;
+            font-weight: 600;
+        }
+
+        /* "Todos los viajes": fija arriba, fuera de la lista que se desplaza */
+        .ficha-todos { flex: none; width: auto; margin: 0 12px 6px; }
+        .ficha-todos .muestra-viaje {
+            background: linear-gradient(90deg, #2563eb, #ea580c, #0d9488, #9333ea);
+        }
+        .panel-viajes.colapsado .ficha-todos { display: none; }
+
+        .viajes-titulo {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         /* El texto se recorta con "..." si no cabe; el titulo muestra todo */
@@ -845,6 +876,35 @@
         }
 
         .panel.colapsado .panel-cuerpo { display: none; }
+
+        /* Resumen del filtro: solo se ve con el panel plegado; al tocarlo
+           el panel se abre otra vez. */
+        .resumen-panel {
+            display: none;
+            width: 100%;
+            margin-top: 6px;
+            padding: 6px 10px;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            background: #f8fafc;
+            font-family: inherit;
+            font-size: 0.78rem;
+            color: #334155;
+            text-align: left;
+            cursor: pointer;
+        }
+        .panel.colapsado .resumen-panel.con-texto { display: block; }
+        .resumen-panel span {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .resumen-panel .resumen-aviso { color: #b45309; font-weight: 600; }
+
+        /* Los selectores de fecha nunca deben salirse del panel */
+        .panel .campo input,
+        .panel .envoltura-fecha { min-width: 0; max-width: 100%; box-sizing: border-box; }
         .panel.colapsado .panel-cabecera { margin-bottom: 0; }
         .panel.colapsado .btn-panel { transform: rotate(180deg); }
 
@@ -969,6 +1029,12 @@
         }
 
         .flotante-inferior > * { pointer-events: auto; }
+
+        /* Pantallas angostas: con los filtros abiertos se oculta la hoja de
+           viajes y la barra de animacion (si no, quedan encima del panel). */
+        @media (max-width: 899px) {
+            body.panel-abierto .flotante-inferior { display: none; }
+        }
         .flotante-inferior .barra-animacion { max-width: none; margin-top: 0; }
 
         /* En pantallas angostas el panel tapa la esquina del boton del pin:
@@ -1002,6 +1068,24 @@
             #sliderRuta { flex: 1 1 90px; }
             .panel .campo input,
             .panel .selector-modo { font-size: 16px; }
+
+            /* Panel de filtros compacto: debe caber sin desplazarse */
+            .panel { padding: 10px 12px; }
+            .panel-cabecera { margin-bottom: 8px; }
+            .panel .controles { gap: 6px; margin-bottom: 6px; }
+            .panel .campo { gap: 2px; }
+            .panel .campo label { font-size: 0.66rem; }
+            .panel .campo input { padding: 6px 14px; height: 36px; }
+            .panel #btnConsultar { padding: 8px 20px; }
+            .panel .ayuda-pin { font-size: 0.68rem; line-height: 1.25; }
+            .panel #mensaje { margin-bottom: 6px; padding: 8px 12px; font-size: 0.76rem; }
+            .panel .cards-container { gap: 6px; margin-bottom: 6px; }
+            .panel .card { padding: 3px 10px; }
+            .panel .card-label { font-size: 0.6rem; }
+            .panel .card-value { font-size: 0.78rem; }
+            details.avanzadas { margin-bottom: 6px; }
+            details.avanzadas summary { padding: 6px 12px; }
+            .ficha-todos { margin: 0 12px 6px; }
         }
 
         /* Pantallas anchas: la lista de viajes es un panel lateral derecho,
@@ -1040,6 +1124,10 @@
             <button type="button" id="btnPanel" class="btn-panel" aria-expanded="true"
                     title="Mostrar u ocultar el panel">▾</button>
         </div>
+
+        <!-- Resumen del filtro aplicado (visible solo con el panel plegado) -->
+        <button type="button" id="resumenPanel" class="resumen-panel"
+                title="Tocar para cambiar el filtro"></button>
 
         <div class="panel-cuerpo">
             <!-- Una sola búsqueda: primero el rango de fechas (obligatorio) y,
@@ -1109,10 +1197,14 @@
         <div id="panelViajes" class="panel-viajes">
             <button type="button" id="btnViajes" class="viajes-cabecera" aria-expanded="true"
                     aria-controls="leyendaViajes" title="Mostrar u ocultar la lista de viajes">
-                <span>Viajes <span id="contadorViajes" class="viajes-contador"></span></span>
+                <span class="viajes-titulo"><span id="tituloViajes">Viajes</span> <span id="contadorViajes" class="viajes-contador"></span></span>
                 <span class="viajes-flecha" aria-hidden="true">▾</span>
             </button>
-            <div id="leyendaViajes" class="leyenda-viajes" role="list" aria-label="Viajes de la ruta"></div>
+            <button type="button" id="fichaTodos" class="ficha-viaje ficha-todos activa" aria-pressed="true">
+                <span class="muestra-viaje"></span>
+                <span>Todos los viajes</span>
+            </button>
+            <div id="leyendaViajes" class="leyenda-viajes" role="group" aria-label="Viajes de la ruta"></div>
         </div>
 
         <div id="barraAnimacion" class="barra-animacion">
@@ -1243,9 +1335,15 @@
         // Unico punto para borrar la ruta del mapa: asi la leyenda del
         // tramo resaltado nunca queda colgada cuando la ruta desaparece.
         function limpiarCapaRecorrido() {
+            ocultarLeyendaViajes();
+            limpiarTrazo();
+        }
+
+        // Borra solo el trazo (ruta, marcadores, animacion); la leyenda de
+        // viajes se conserva. Lo usa pintarRuta() al mostrar un viaje suelto.
+        function limpiarTrazo() {
             capaRecorrido.clearLayers();
             quitarLeyendaTramo();
-            ocultarLeyendaViajes();
             marcadorInicio = null;
             marcadorFin = null;
 
@@ -1304,11 +1402,24 @@
             return texto + ' → ' + (fin.dia === ini.dia ? fin.hora : `${fin.dia} ${fin.hora}`);
         }
 
-        function agregarFicha(color, texto) {
-            const ficha = document.createElement('span');
+        // Identificador de "Sin viaje registrado" en la seleccion
+        const ID_SIN_VIAJE = '__sin_viaje__';
+        // Ultima consulta dibujada (todos los puntos y viajes) y viaje elegido
+        // (null = todos). Asi se puede redibujar un solo viaje sin volver a
+        // pedir datos ni perder la leyenda.
+        let ultimaConsulta = null;
+        let viajeSeleccionado = null;
+
+        const tituloViajes = document.getElementById('tituloViajes');
+        const fichaTodos = document.getElementById('fichaTodos');
+        let fichasViaje = new Map();   // id -> boton
+
+        function agregarFicha(id, color, texto) {
+            const ficha = document.createElement('button');
+            ficha.type = 'button';
             ficha.className = 'ficha-viaje';
-            ficha.setAttribute('role', 'listitem');
             ficha.title = texto;
+            ficha.setAttribute('aria-pressed', 'false');
             const muestra = document.createElement('span');
             muestra.className = 'muestra-viaje';
             muestra.style.background = color;
@@ -1316,26 +1427,25 @@
             etiqueta.textContent = texto;
             ficha.appendChild(muestra);
             ficha.appendChild(etiqueta);
+            ficha.addEventListener('click', function() { seleccionarViaje(id); });
             leyendaViajes.appendChild(ficha);
+            fichasViaje.set(id, ficha);
         }
 
         // 'viajes' llega en orden cronologico (el mas antiguo primero). La
         // lista se muestra al reves: el mas reciente arriba y el mas antiguo
-        // abajo. Los 8 colores son para los 8 mas recientes; el resto va junto
-        // en "Otros N viajes", al final de la lista.
+        // abajo. Los 8 mas recientes llevan un color propio; los anteriores
+        // comparten el gris, pero cada uno tiene su ficha.
         function mostrarLeyendaViajes(viajes, haySinViaje) {
             leyendaViajes.replaceChildren();
+            fichasViaje = new Map();
             const total = viajes.length;
-            for (let r = 0; r < total && r < PALETA_VIAJES.length; r++) {
+            for (let r = 0; r < total; r++) {
                 const v = viajes[total - 1 - r];
-                agregarFicha(colorDeViaje(r), infoViajes.get(v.id).etiqueta);
+                agregarFicha(v.id, colorDeViaje(r), infoViajes.get(v.id).etiqueta);
             }
-            const extra = total - PALETA_VIAJES.length;
-            if (extra > 0) {
-                agregarFicha(COLOR_OTROS_VIAJES, `Otros ${extra} ${extra === 1 ? 'viaje' : 'viajes'}`);
-            }
-            if (haySinViaje) agregarFicha(COLOR_SIN_VIAJE, 'Sin viaje registrado');
-            contadorViajes.textContent = `(${total})`;
+            if (haySinViaje) agregarFicha(ID_SIN_VIAJE, COLOR_SIN_VIAJE, 'Sin viaje registrado');
+            actualizarFichasActivas();
             panelViajes.style.display = 'flex';
             // PC: abierto. Celular: plegado, para no tapar el mapa.
             colapsarViajes(esPantallaAngosta());
@@ -1343,9 +1453,62 @@
 
         function ocultarLeyendaViajes() {
             leyendaViajes.replaceChildren();
+            fichasViaje = new Map();
             panelViajes.style.display = 'none';
             infoViajes = new Map();
+            ultimaConsulta = null;
+            viajeSeleccionado = null;
         }
+
+        // Marca la ficha activa y pone en la cabecera el viaje elegido (en el
+        // celular la lista esta plegada y asi se sabe que se esta viendo).
+        function actualizarFichasActivas() {
+            const total = ultimaConsulta ? ultimaConsulta.viajes.length : 0;
+            fichaTodos.classList.toggle('activa', viajeSeleccionado === null);
+            fichaTodos.setAttribute('aria-pressed', String(viajeSeleccionado === null));
+            fichasViaje.forEach(function(boton, id) {
+                const activa = (id === viajeSeleccionado);
+                boton.classList.toggle('activa', activa);
+                boton.setAttribute('aria-pressed', String(activa));
+            });
+            if (viajeSeleccionado === null) {
+                tituloViajes.textContent = 'Viajes';
+                contadorViajes.textContent = `(${total})`;
+            } else {
+                const boton = fichasViaje.get(viajeSeleccionado);
+                tituloViajes.textContent = boton ? boton.title : '';
+                contadorViajes.textContent = '';
+            }
+        }
+
+        function idViajeDe(punto) {
+            const id = punto.viaje_id;
+            return (id === undefined || id === null || !infoViajes.has(id)) ? ID_SIN_VIAJE : id;
+        }
+
+        // id = viaje a mostrar solo; null = todos. Tocar de nuevo el viaje
+        // ya elegido tambien vuelve a todos.
+        function seleccionarViaje(id) {
+            if (!ultimaConsulta) return;
+            if (id !== null && id === viajeSeleccionado) id = null;
+
+            let puntos = ultimaConsulta.puntos;
+            if (id !== null) {
+                puntos = puntos.filter(p => idViajeDe(p) === id);
+                if (puntos.length === 0) { id = null; puntos = ultimaConsulta.puntos; }
+            }
+            viajeSeleccionado = id;
+            pintarRuta(puntos);
+
+            document.getElementById('totalPuntos').innerText = puntos.length;
+            document.getElementById('horaInicio').innerText = puntos[0].hora;
+            document.getElementById('horaFin').innerText = puntos[puntos.length - 1].hora;
+
+            actualizarFichasActivas();
+            if (esPantallaAngosta()) colapsarViajes(true);
+        }
+
+        fichaTodos.addEventListener('click', function() { seleccionarViaje(null); });
 
         // Por debajo de 900 px el panel de viajes es una hoja inferior y
         // comparte pantalla con el panel de filtros: solo uno abierto a la vez.
@@ -1388,6 +1551,9 @@
             altInput: true,
             altFormat: "d/m/Y h:i K",
             locale: "es",
+            // En el celular se usa SIEMPRE este selector y no el nativo del
+            // sistema, que en iPhone se sale del panel.
+            disableMobile: true,
             maxDate: new Date(),
             minuteIncrement: 1,
             onChange: function() {
@@ -1469,6 +1635,7 @@
         function limpiarMapaYResumen() {
             limpiarCapaRecorrido();
             limpiarResumen();
+            ocultarResumenPanel();
         }
 
         // ===== Punto bajo el cursor de la ruta =====
@@ -1787,8 +1954,28 @@
         // marcas de viaje), se pinta de un solo color como siempre.
         function dibujarRecorrido(puntos, viajes) {
             limpiarCapaRecorrido();
-            puntosActuales = puntos;
             viajes = viajes || [];
+            ultimaConsulta = { puntos: puntos, viajes: viajes };
+            viajeSeleccionado = null;
+
+            if (viajes.length > 0) {
+                viajes.forEach(function(v, i) {
+                    infoViajes.set(v.id, {
+                        numero: i + 1,
+                        color: colorDeViaje(viajes.length - 1 - i),
+                        etiqueta: etiquetaViaje(i + 1, v)
+                    });
+                });
+                const haySinViaje = puntos.some(p => idViajeDe(p) === ID_SIN_VIAJE);
+                mostrarLeyendaViajes(viajes, haySinViaje);
+            }
+            pintarRuta(puntos);
+        }
+
+        // Dibuja (o redibuja) la ruta de 'puntos' con los colores de infoViajes.
+        function pintarRuta(puntos) {
+            limpiarTrazo();
+            puntosActuales = puntos;
 
             const coordenadas = puntos.map(p => [p.lat, p.lon]);
 
@@ -1798,22 +1985,13 @@
             // clic sobre la ruta "atraviese" la linea y coloque un pin.
             const estiloTrazo = { weight: 4, opacity: 0.8, interactive: false, bubblingMouseEvents: false };
 
-            if (viajes.length === 0) {
+            if (infoViajes.size === 0) {
                 L.polyline(coordenadas, Object.assign({ color: COLOR_RUTA_UNICA }, estiloTrazo))
                     .addTo(capaRecorrido);
             } else {
-                viajes.forEach(function(v, i) {
-                    infoViajes.set(v.id, {
-                        numero: i + 1,
-                        color: colorDeViaje(viajes.length - 1 - i),
-                        etiqueta: etiquetaViaje(i + 1, v)
-                    });
-                });
-                let haySinViaje = false;
                 segmentarPorViaje(puntos).forEach(function(seg) {
                     const info = (seg.viajeId === null) ? null : infoViajes.get(seg.viajeId);
                     const color = info ? info.color : COLOR_SIN_VIAJE;
-                    if (!info) haySinViaje = true;
                     if (seg.puntos.length > 1) {
                         L.polyline(seg.puntos.map(p => [p.lat, p.lon]),
                                    Object.assign({ color: color }, estiloTrazo)).addTo(capaRecorrido);
@@ -1826,7 +2004,6 @@
                         }).addTo(capaRecorrido);
                     }
                 });
-                mostrarLeyendaViajes(viajes, haySinViaje);
             }
 
             crearLineaHover(coordenadas);
@@ -1958,6 +2135,7 @@
             resultadosLugar.style.display = 'none';
             capaLugar.clearLayers();
             ultimoLugar = null;
+            ocultarResumenPanel();
 
             boton.disabled = true;
             boton.innerText = 'Consultando...';
@@ -1991,15 +2169,18 @@
                     datos.puntos[datos.total - 1].hora;
 
                 if (datos.truncado) {
+                    // El aviso queda en el panel (y en el resumen) para quien
+                    // lo abra; el mapa se muestra igual.
                     mostrarMensaje(
                         'El rango tiene demasiados envíos y se recortó. ' +
                         'Reduce la ventana de tiempo para ver el recorrido completo.',
                         'info'
                     );
-                } else {
-                    // Ruta dibujada: el panel se pliega para dejar ver el mapa.
-                    colapsarPanel(true);
                 }
+                fijarResumenPanel(null, datos.truncado ? datos.total : 0);
+                // Ruta dibujada: el panel se pliega para dejar ver el mapa
+                // (los campos conservan lo que el usuario eligio).
+                colapsarPanel(true);
 
             } catch (error) {
                 console.error(error);
@@ -2035,7 +2216,77 @@
         function colapsarPanel(colapsar) {
             panel.classList.toggle('colapsado', colapsar);
             btnPanel.setAttribute('aria-expanded', String(!colapsar));
+            // En pantallas angostas el CSS oculta la hoja de viajes y la
+            // barra de animacion mientras los filtros estan abiertos.
+            document.body.classList.toggle('panel-abierto', !colapsar);
         }
+
+        // ----- Resumen del filtro, bajo el selector de modo -----
+        const resumenPanel = document.getElementById('resumenPanel');
+        // { desde: Date, hasta: Date|null, lugar: string|null, truncado: number|0 }
+        let resumenEstado = null;
+
+        function textoFechaCorta(d, conAnio) {
+            const dd = String(d.getDate()).padStart(2, '0');
+            const mm = String(d.getMonth() + 1).padStart(2, '0');
+            const h24 = d.getHours();
+            const h = h24 % 12 === 0 ? 12 : h24 % 12;
+            const min = String(d.getMinutes()).padStart(2, '0');
+            const ampm = h24 < 12 ? 'AM' : 'PM';
+            return `${dd}/${mm}${conAnio ? '/' + d.getFullYear() : ''} ${h}:${min} ${ampm}`;
+        }
+
+        function ocultarResumenPanel() {
+            resumenEstado = null;
+            resumenPanel.replaceChildren();
+            resumenPanel.classList.remove('con-texto');
+        }
+
+        function mostrarResumenPanel() {
+            resumenPanel.replaceChildren();
+            if (!resumenEstado) {
+                resumenPanel.classList.remove('con-texto');
+                return;
+            }
+            const { desde, hasta, lugar, truncado } = resumenEstado;
+            const anioActual = new Date().getFullYear();
+            const conAnio = desde.getFullYear() !== anioActual ||
+                (hasta && hasta.getFullYear() !== anioActual) ||
+                (hasta && hasta.getFullYear() !== desde.getFullYear());
+            const lineas = [`📅 ${textoFechaCorta(desde, conAnio)} → ` +
+                            (hasta ? textoFechaCorta(hasta, conAnio) : 'ahora')];
+            if (lugar) lineas.push(`📍 ${lugar}`);
+            lineas.forEach(function(texto) {
+                const s = document.createElement('span');
+                s.textContent = texto;
+                s.title = texto;
+                resumenPanel.appendChild(s);
+            });
+            if (truncado) {
+                const s = document.createElement('span');
+                s.className = 'resumen-aviso';
+                s.textContent = `⚠ Recortado a ${truncado} envíos`;
+                resumenPanel.appendChild(s);
+            }
+            resumenPanel.classList.add('con-texto');
+        }
+
+        // Fotografia del filtro en el momento de consultar: si despues el
+        // usuario cambia los campos sin consultar, el resumen sigue diciendo
+        // lo que realmente se esta viendo.
+        function fijarResumenPanel(lugar, truncado) {
+            const desde = pickerDesde.selectedDates[0];
+            if (!desde) { ocultarResumenPanel(); return; }
+            resumenEstado = {
+                desde: desde,
+                hasta: pickerHasta.selectedDates[0] || null,
+                lugar: lugar || null,
+                truncado: truncado || 0
+            };
+            mostrarResumenPanel();
+        }
+
+        resumenPanel.addEventListener('click', function() { colapsarPanel(false); });
 
         btnPanel.addEventListener('click', function() {
             const abrir = panel.classList.contains('colapsado');
@@ -2391,6 +2642,7 @@
             quitarPin();
             ultimoLugar = null;
             limpiarResumen();
+            ocultarResumenPanel();
             if (enfocar && !inputDireccion.disabled) inputDireccion.focus();
         }
 
@@ -2556,6 +2808,7 @@
             limpiarCapaRecorrido();
             ultimoLugar = null;
             limpiarResumen();
+            ocultarResumenPanel();
 
             try {
                 const lat = parseFloat(lugar.lat);
@@ -2577,6 +2830,8 @@
                 const enRango = hasta ? ' en el rango seleccionado' : ' desde la fecha elegida';
 
                 // La lista de visitas vive en el panel: se abre para verla.
+                // El resumen (fechas + lugar) aparece cuando se pliegue.
+                fijarResumenPanel(lugar.display_name, 0);
                 colapsarPanel(false);
 
                 if (datos.total_visitas === 0) {
@@ -2604,6 +2859,7 @@
         // boton del pin ya esta disponible (se habilita al tener fechas).
         mostrarControlPin();
         actualizarEstadoLugar();
+        colapsarPanel(false);
     </script>
 </body>
 </html>
