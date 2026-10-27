@@ -1,6 +1,11 @@
 import os
 import math
 import socket
+import json
+import time
+import threading
+import urllib.parse
+import urllib.request
 import mysql.connector
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -292,27 +297,19 @@ def distancia_metros(lat1, lon1, lat2, lon2):
     return 2 * radio_tierra * math.asin(math.sqrt(a))
 
 # --- Lugar: busca el viaje (tabla viajes) que contiene una visita ---
-def buscar_viaje_de_visita(entrada_utc, salida_utc):
-    """Devuelve (inicio, fin) del viaje que abarca esta visita, o None si no
-    hay ningun viaje cerrado que la contenga (por ejemplo, datos guardados
-    antes de que la app empezara a mandar INICIO_RECORRIDO/FIN_RECORRIDO).
-
-    Solo se consideran viajes ya CERRADOS (fin IS NOT NULL): la comparacion
-    "fin >= %s" en SQL descarta automaticamente las filas con fin NULL,
-    porque NULL nunca es mayor o igual a nada.
-    """
-    conexion = conectar_mysql()
-    cursor = conexion.cursor(dictionary=True)
-    cursor.execute("""
-        SELECT inicio, fin FROM viajes
-        WHERE inicio <= %s AND fin >= %s
-        ORDER BY inicio DESC
-        LIMIT 1
-    """, (entrada_utc, salida_utc))
-    fila = cursor.fetchone()
-    cursor.close()
-    conexion.close()
-    return fila
+def buscar_viaje_de_visita(cursor, entrada_utc, salida_utc):
+    """Devuelve (inicio, fin) del viaje que abarca esta visita, o None."""
+    try:
+        cursor.execute("""
+            SELECT inicio, fin FROM viajes
+            WHERE inicio <= %s AND fin >= %s
+            ORDER BY inicio DESC
+            LIMIT 1
+        """, (entrada_utc, salida_utc))
+        return cursor.fetchone()
+    except Exception as e:
+        print(f"Aviso: error al buscar viaje de la visita: {e}")
+        return None
 
 # --- Lugar: agrupa los puntos cercanos en "visitas" ---
 def encontrar_visitas(lat_lugar, lon_lugar, desde_utc=None, hasta_utc=None):
@@ -348,8 +345,6 @@ def encontrar_visitas(lat_lugar, lon_lugar, desde_utc=None, hasta_utc=None):
     cursor = conexion.cursor(dictionary=True)
     cursor.execute(consulta, parametros)
     filas = cursor.fetchall()
-    cursor.close()
-    conexion.close()
 
     # Primera pasada: agrupar en visitas crudas (con datetime en UTC, tal
     # como vienen de MySQL, para poder consultar despues la tabla viajes
@@ -393,7 +388,8 @@ def encontrar_visitas(lat_lugar, lon_lugar, desde_utc=None, hasta_utc=None):
         entrada_local = entrada_utc.replace(tzinfo=UTC).astimezone(BOGOTA)
         salida_local = salida_utc.replace(tzinfo=UTC).astimezone(BOGOTA)
 
-        viaje = buscar_viaje_de_visita(entrada_utc, salida_utc)
+        # AHORA LE PASAMOS EL CURSOR ACTIVO
+        viaje = buscar_viaje_de_visita(cursor, entrada_utc, salida_utc)
         if viaje:
             viaje_inicio_local = viaje['inicio'].replace(tzinfo=UTC).astimezone(BOGOTA)
             viaje_fin_local = viaje['fin'].replace(tzinfo=UTC).astimezone(BOGOTA)
@@ -412,7 +408,8 @@ def encontrar_visitas(lat_lugar, lon_lugar, desde_utc=None, hasta_utc=None):
             'viaje_inicio': viaje_inicio_iso,
             'viaje_fin': viaje_fin_iso
         })
-
+    cursor.close()
+    conexion.close()
     return visitas
 
 @app.route('/')
@@ -429,12 +426,16 @@ def api_historial():
     desde = request.args.get('desde')
     hasta = request.args.get('hasta')
 
-    if not desde or not hasta:
-        return jsonify({'error': 'Faltan los parametros desde y hasta'}), 400
+    # Solo "desde" es obligatorio. Sin "hasta" se consulta hasta este momento.
+    if not desde:
+        return jsonify({'error': 'Falta el parametro desde'}), 400
 
     try:
         desde_utc = a_utc(desde)
-        hasta_utc = a_utc(hasta)
+        if hasta:
+            hasta_utc = a_utc(hasta)
+        else:
+            hasta_utc = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
     except ValueError:
         return jsonify({'error': 'Formato de fecha invalido'}), 400
 
@@ -469,22 +470,22 @@ def api_lugar():
     except ValueError:
         return jsonify({'error': 'lat y lon deben ser numeros validos'}), 400
 
-    # Rango de fechas OPCIONAL: puede venir solo desde, solo hasta, ambos o
-    # ninguno. Llegan en hora de Colombia, igual que en /api/historial.
+    # Primero fecha, despues lugar: "desde" es OBLIGATORIO y "hasta" opcional
+    # (sin "hasta" se busca hasta ahora). Llegan en hora de Colombia, igual
+    # que en /api/historial.
     desde = request.args.get('desde')
     hasta = request.args.get('hasta')
-    desde_utc = None
-    hasta_utc = None
+
+    if not desde:
+        return jsonify({'error': 'Primero elige la fecha inicial: falta el parametro desde'}), 400
 
     try:
-        if desde:
-            desde_utc = a_utc(desde)
-        if hasta:
-            hasta_utc = a_utc(hasta)
+        desde_utc = a_utc(desde)
+        hasta_utc = a_utc(hasta) if hasta else None
     except ValueError:
         return jsonify({'error': 'Formato de fecha invalido'}), 400
 
-    if desde_utc and hasta_utc and desde_utc >= hasta_utc:
+    if hasta_utc and desde_utc >= hasta_utc:
         return jsonify({'error': 'La fecha inicial debe ser anterior a la final'}), 400
 
     try:
@@ -498,6 +499,61 @@ def api_lugar():
         'visitas': visitas,
         'total_visitas': len(visitas)
     })
+
+# --- Direccion y barrio del vehiculo (geocodificacion inversa) ---
+# Nominatim (OpenStreetMap) permite ~1 consulta por segundo y exige un
+# User-Agent propio. Por eso se consulta desde el servidor, con cache por
+# celda de ~25 m y un minimo de 1.1 s entre consultas reales.
+_cache_direccion = {}
+_ultima_consulta_nominatim = 0.0
+_candado_nominatim = threading.Lock()
+
+@app.route('/api/direccion')
+def api_direccion():
+    global _ultima_consulta_nominatim
+    try:
+        lat = float(request.args.get('lat', ''))
+        lon = float(request.args.get('lon', ''))
+    except ValueError:
+        return jsonify({'error': 'lat y lon deben ser numeros validos'}), 400
+
+    clave = (round(lat, 4), round(lon, 4))
+    if clave in _cache_direccion:
+        return jsonify(_cache_direccion[clave])
+
+    with _candado_nominatim:
+        espera = 1.1 - (time.time() - _ultima_consulta_nominatim)
+        if espera > 0:
+            time.sleep(espera)
+        _ultima_consulta_nominatim = time.time()
+        url = 'https://nominatim.openstreetmap.org/reverse?' + urllib.parse.urlencode({
+            'format': 'jsonv2', 'lat': lat, 'lon': lon,
+            'zoom': 18, 'addressdetails': 1, 'accept-language': 'es'
+        })
+        peticion = urllib.request.Request(url, headers={'User-Agent': f'TelemetriaGPS/{NOMBRE_PAGINA}'})
+        try:
+            with urllib.request.urlopen(peticion, timeout=6) as r:
+                datos = json.load(r)
+        except Exception as error:
+            print(f"Error en geocodificacion inversa: {error}")
+            return jsonify({'error': 'No se pudo obtener la direccion'}), 502
+
+    d = datos.get('address', {})
+    calle = d.get('road') or d.get('pedestrian') or d.get('footway') or ''
+    numero = d.get('house_number', '')
+    barrio = (d.get('neighbourhood') or d.get('suburb') or d.get('quarter')
+              or d.get('city_district') or '')
+    ciudad = d.get('city') or d.get('town') or d.get('village') or d.get('municipality') or ''
+    resultado = {
+        'direccion': (f"{calle} {numero}".strip()) or datos.get('name') or '',
+        'barrio': barrio,
+        'ciudad': ciudad,
+        'completa': datos.get('display_name', '')
+    }
+    if len(_cache_direccion) > 2000:
+        _cache_direccion.clear()
+    _cache_direccion[clave] = resultado
+    return jsonify(resultado)
 
 if __name__ == '__main__':
     print(f"Página: {NOMBRE_PAGINA}")
