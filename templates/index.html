@@ -64,34 +64,31 @@
             margin-bottom: 10px;
         }
 
-        /* Pestañas de navegación entre las dos vistas */
-        .tabs {
-            display: flex;
-            gap: 6px;
-            margin-bottom: 12px;
-            background: #e2e8f0;
-            padding: 4px;
-            border-radius: 50px;
-        }
-
-        .tab {
-            flex: 1;
-            text-align: center;
-            padding: 6px 10px;
-            border-radius: 50px;
-            text-decoration: none;
+        /* Menú desplegable compacto */
+        .selector-modo {
+            width: auto;
+            min-width: 170px;
+            padding: 6px 12px;
+            border-radius: 12px;
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
             font-size: 0.82rem;
             font-weight: 600;
-            color: #64748b;
-            transition: background 0.2s ease, color 0.2s ease;
+            color: #1e293b;
+            cursor: pointer;
+            margin-bottom: 12px;
+            outline: none;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
 
-        .tab:hover { color: #1e293b; }
+        .selector-modo:hover {
+            border-color: #94a3b8;
+        }
 
-        .tab.activa {
+        .selector-modo:focus {
+            border-color: #2563eb;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
             background: #ffffff;
-            color: #2563eb;
-            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
         }
 
         /* Dirección y barrio donde está el vehículo */
@@ -383,10 +380,10 @@
     <div class="panel">
         <h1>📡 {{ nombre_pagina }}</h1>
 
-        <div class="tabs">
-            <a href="/" class="tab activa">📡 En vivo</a>
-            <a href="/historial" class="tab">🕘 Histórico</a>
-        </div>
+        <select class="selector-modo" onchange="window.location.href=this.value;">
+            <option value="/" selected>📡 Modo: En vivo</option>
+            <option value="/historial">🕘 Modo: Histórico</option>
+        </select>
 
         <div class="ubicacion">
             <div class="dato-etiqueta">Dirección</div>
