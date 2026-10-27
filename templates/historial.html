@@ -606,6 +606,25 @@
             cursor: crosshair !important;
         }
 
+        /* Globo con el boton "Consultar" junto al pin */
+        .popup-pin .leaflet-popup-content-wrapper {
+            padding: 0;
+            border-radius: 12px;
+        }
+        .popup-pin .leaflet-popup-content { margin: 4px; }
+
+        .btn-consultar-pin {
+            padding: 6px 16px;
+            border: none;
+            border-radius: 50px;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-consultar-pin:hover { background: #1d4ed8; }
+
         /* Etiqueta del punto de la ruta bajo el cursor (o tocado) */
         .etiqueta-punto {
             font-family: 'Poppins', sans-serif;
@@ -898,16 +917,17 @@
                     </div>
                 </div>
                 <div class="campo">
-                    <label for="hasta"><span class="paso">1</span> Hasta</label>
+                    <label for="hasta"><span class="paso">1</span> Hasta <span class="opcional">(opcional)</span></label>
                     <div class="envoltura-fecha">
-                        <input type="text" id="hasta" placeholder="Selecciona fecha y hora">
+                        <input type="text" id="hasta" placeholder="Hasta ahora">
+                        <button type="button" id="btnLimpiarHasta" class="btn-limpiar" title="Quitar fecha final">&times;</button>
                     </div>
                 </div>
                 <div class="campo campo-autocompletar" id="campoLugar">
                     <label for="direccionLugar"><span class="paso">2</span> Lugar <span class="opcional">(opcional)</span></label>
                     <div class="envoltura-input">
                         <input type="text" id="direccionLugar" class="campo-texto"
-                               placeholder="Primero elige las fechas" autocomplete="off" disabled>
+                               placeholder="Primero elige la fecha inicial" autocomplete="off" disabled>
                         <button type="button" id="btnLimpiarLugar" class="btn-limpiar" title="Borrar lugar">&times;</button>
                     </div>
                     <!-- Lista desplegable de sugerencias, estilo Google Maps -->
@@ -1195,7 +1215,17 @@
         };
 
         const pickerDesde = flatpickr("#desde", configFecha);
-        const pickerHasta = flatpickr("#hasta", configFecha);
+        const pickerHasta = flatpickr("#hasta", Object.assign({}, configFecha, {
+            // Muestra u oculta la "x" segun haya fecha final.
+            onChange: function(fechas, texto, instancia) {
+                ocultarMensaje();
+                instancia.input.closest('.envoltura-fecha')
+                    .classList.toggle('con-valor', fechas.length > 0);
+                actualizarEstadoLugar();
+            }
+        }));
+        document.getElementById('btnLimpiarHasta')
+            .addEventListener('click', () => pickerHasta.clear());
 
         // Paso 1 -> paso 2: el lugar solo se habilita cuando hay un rango de
         // fechas completo y coherente (desde < hasta). Se llama cada vez que
@@ -1203,17 +1233,18 @@
         function fechasLugarValidas() {
             const desde = document.getElementById('desde').value;
             const hasta = document.getElementById('hasta').value;
-            return Boolean(desde && hasta && desde < hasta);
+            // Solo "Desde" es obligatorio; "Hasta" vacio significa "hasta ahora".
+            return Boolean(desde && (!hasta || desde < hasta));
         }
 
         function actualizarEstadoLugar() {
             const listas = fechasLugarValidas();
             const campo = document.getElementById('direccionLugar');
             campo.disabled = !listas;
-            campo.placeholder = listas ? 'Escribe un lugar para filtrar...' : 'Primero elige las fechas';
+            campo.placeholder = listas ? 'Escribe un lugar para filtrar...' : 'Primero elige la fecha inicial';
             document.getElementById('ayudaPin').innerText = listas
-                ? '💡 El lugar es opcional: sin lugar verás todo el recorrido del rango. También puedes tocar 📍 en el mapa y marcar el punto exacto.'
-                : '🔒 Elige primero el rango de fechas. Después podrás, si quieres, filtrar por un lugar.';
+                ? '💡 El lugar es opcional: sin lugar verás todo el recorrido desde esa fecha. También puedes tocar 📍 en el mapa y marcar el punto exacto.'
+                : '🔒 Elige primero la fecha inicial. Después podrás, si quieres, filtrar por un lugar.';
             if (!listas) {
                 // Sin fechas validas no puede haber lugar activo.
                 if (typeof lugarSeleccionado !== 'undefined' && lugarSeleccionado) {
@@ -1234,6 +1265,8 @@
             mensaje.innerText = texto;
             mensaje.className = tipo;
             mensaje.style.display = 'block';
+            // Un error debe verse aunque el panel este plegado.
+            if (tipo === 'error') colapsarPanel(false);
         }
 
         function ocultarMensaje() {
@@ -1723,20 +1756,21 @@
             const desde = document.getElementById('desde').value;
             const hasta = document.getElementById('hasta').value;
 
-            if (!desde || !hasta) {
+            if (!desde) {
                 limpiarMapaYResumen();
-                mostrarMensaje('Selecciona la fecha y hora de inicio y de fin.', 'error');
+                mostrarMensaje('Selecciona al menos la fecha y hora de inicio.', 'error');
                 return;
             }
 
-            if (desde >= hasta) {
+            if (hasta && desde >= hasta) {
                 limpiarMapaYResumen();
                 mostrarMensaje('La fecha inicial debe ser anterior a la final.', 'error');
                 return;
             }
 
             const desdeIso = desde.replace(' ', 'T');
-            const hastaIso = hasta.replace(' ', 'T');
+            // Sin fecha final se consulta desde "Desde" hasta ahora.
+            const hastaIso = hasta ? hasta.replace(' ', 'T') : '';
 
             // Busqueda solo por fechas: no hay lugar que mostrar.
             resultadosLugar.style.display = 'none';
@@ -1748,7 +1782,7 @@
             ocultarMensaje();
 
             try {
-                const url = `/api/historial?desde=${desdeIso}&hasta=${hastaIso}`;
+                const url = `/api/historial?desde=${desdeIso}` + (hastaIso ? `&hasta=${hastaIso}` : '');
                 const respuesta = await fetch(url);
                 const datos = await respuesta.json();
 
@@ -1780,6 +1814,9 @@
                         'Reduce la ventana de tiempo para ver el recorrido completo.',
                         'info'
                     );
+                } else {
+                    // Ruta dibujada: el panel se pliega para dejar ver el mapa.
+                    colapsarPanel(true);
                 }
 
             } catch (error) {
@@ -1906,9 +1943,31 @@
                 // Al soltar el pin despues de arrastrarlo se actualizan las coordenadas.
                 pinMarcador.on('dragend', function() {
                     establecerPin(pinMarcador.getLatLng());
+                    pinMarcador.openPopup();
+                });
+                // Globo junto al pin con un boton "Consultar": evita abrir
+                // el panel solo para lanzar la busqueda.
+                const globo = document.createElement('div');
+                globo.className = 'globo-pin';
+                const botonGlobo = document.createElement('button');
+                botonGlobo.type = 'button';
+                botonGlobo.className = 'btn-consultar-pin';
+                botonGlobo.textContent = 'Consultar';
+                botonGlobo.addEventListener('click', function() {
+                    pinMarcador.closePopup();
+                    consultarTodo();
+                });
+                globo.appendChild(botonGlobo);
+                pinMarcador.bindPopup(globo, {
+                    closeButton: false,
+                    autoClose: false,
+                    closeOnClick: false,
+                    offset: [0, -26],
+                    className: 'popup-pin'
                 });
             }
             establecerPin(latlng);
+            pinMarcador.openPopup();
         }
 
         // Quitar el pin tambien apaga el modo pin: se llama al escribir una
@@ -2071,7 +2130,7 @@
         // esa seleccion queda invalida hasta que elija una nueva de la lista.
         inputDireccion.addEventListener('input', function() {
             lugarSeleccionado = null;
-            botonLugar.disabled = true;
+            actualizarEstadoLugar();
             // Si el usuario escribe, el texto ya no corresponde al pin.
             quitarPin();
 
@@ -2136,7 +2195,7 @@
         function limpiarBusquedaLugar(enfocar = true) {
             inputDireccion.value = '';
             lugarSeleccionado = null;
-            botonLugar.disabled = true;
+            actualizarEstadoLugar();
             envolturaInput.classList.remove('con-texto');
             ocultarSugerencias();
             ocultarMensaje();
@@ -2207,8 +2266,8 @@
                     <span class="visita-detalle">${visita.puntos} envío(s)</span>
                 `;
                 item.addEventListener('click', function() {
-                    // En pantallas angostas el panel se pliega para dejar ver la ruta.
-                    if (window.innerWidth < 640) colapsarPanel(true);
+                    // Al elegir una visita el panel se pliega para dejar ver la ruta.
+                    colapsarPanel(true);
                     verRutaDeVisita(visita);
                 });
                 listaVisitas.appendChild(item);
@@ -2283,12 +2342,12 @@
             const desde = document.getElementById('desde').value;
             const hasta = document.getElementById('hasta').value;
 
-            if (!desde || !hasta) {
-                mostrarMensaje('Primero elige las fechas (Desde y Hasta) y luego busca el lugar.', 'error');
+            if (!desde) {
+                mostrarMensaje('Primero elige la fecha inicial y luego busca el lugar.', 'error');
                 return;
             }
 
-            if (desde >= hasta) {
+            if (hasta && desde >= hasta) {
                 // Igual que en "Por fecha": se avisa sin gastar una peticion y
                 // se limpia lo anterior para que no parezca de esta consulta.
                 resultadosLugar.style.display = 'none';
@@ -2299,11 +2358,11 @@
                 return;
             }
 
-            const parametrosFecha =
-                `&desde=${desde.replace(' ', 'T')}&hasta=${hasta.replace(' ', 'T')}`;
+            const parametrosFecha = `&desde=${desde.replace(' ', 'T')}` +
+                (hasta ? `&hasta=${hasta.replace(' ', 'T')}` : '');
             const textoFiltro = describirFiltro(desde, hasta);
 
-            botonLugar.disabled = true;
+            actualizarEstadoLugar();
             botonLugar.innerText = 'Buscando...';
             ocultarMensaje();
             resultadosLugar.style.display = 'none';
@@ -2329,7 +2388,10 @@
                 dibujarLugar(lat, lon, datos.radio_metros, lugar.display_name, Boolean(lugar.esPin));
                 mostrarVisitas(datos.visitas, lugar.display_name, datos.radio_metros, textoFiltro);
 
-                const enRango = ' en el rango seleccionado';
+                const enRango = hasta ? ' en el rango seleccionado' : ' desde la fecha elegida';
+
+                // La lista de visitas vive en el panel: se abre para verla.
+                colapsarPanel(false);
 
                 if (datos.total_visitas === 0) {
                     mostrarMensaje(`El vehículo no registró visitas a este lugar${enRango}.`, 'info');

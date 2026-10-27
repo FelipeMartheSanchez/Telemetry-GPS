@@ -426,12 +426,16 @@ def api_historial():
     desde = request.args.get('desde')
     hasta = request.args.get('hasta')
 
-    if not desde or not hasta:
-        return jsonify({'error': 'Faltan los parametros desde y hasta'}), 400
+    # Solo "desde" es obligatorio. Sin "hasta" se consulta hasta este momento.
+    if not desde:
+        return jsonify({'error': 'Falta el parametro desde'}), 400
 
     try:
         desde_utc = a_utc(desde)
-        hasta_utc = a_utc(hasta)
+        if hasta:
+            hasta_utc = a_utc(hasta)
+        else:
+            hasta_utc = datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')
     except ValueError:
         return jsonify({'error': 'Formato de fecha invalido'}), 400
 
@@ -466,21 +470,22 @@ def api_lugar():
     except ValueError:
         return jsonify({'error': 'lat y lon deben ser numeros validos'}), 400
 
-    # Primero fechas, despues lugar: el rango es OBLIGATORIO. Llega en hora
-    # de Colombia, igual que en /api/historial.
+    # Primero fecha, despues lugar: "desde" es OBLIGATORIO y "hasta" opcional
+    # (sin "hasta" se busca hasta ahora). Llegan en hora de Colombia, igual
+    # que en /api/historial.
     desde = request.args.get('desde')
     hasta = request.args.get('hasta')
 
-    if not desde or not hasta:
-        return jsonify({'error': 'Primero elige las fechas: faltan los parametros desde y hasta'}), 400
+    if not desde:
+        return jsonify({'error': 'Primero elige la fecha inicial: falta el parametro desde'}), 400
 
     try:
         desde_utc = a_utc(desde)
-        hasta_utc = a_utc(hasta)
+        hasta_utc = a_utc(hasta) if hasta else None
     except ValueError:
         return jsonify({'error': 'Formato de fecha invalido'}), 400
 
-    if desde_utc >= hasta_utc:
+    if hasta_utc and desde_utc >= hasta_utc:
         return jsonify({'error': 'La fecha inicial debe ser anterior a la final'}), 400
 
     try:
