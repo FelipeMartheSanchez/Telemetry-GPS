@@ -377,7 +377,76 @@
         #pantallaCarga.error #btnCerrarCarga {
             display: inline-block;
         }
-        .icono-vivo { font-size: 26px; text-align: center; line-height: 30px; }
+        .icono-vivo { font-size: 26px; text-align: center; line-height: 30px; transition: opacity 0.3s ease; }
+        .icono-vivo.sin-senal { opacity: 0.45; }
+
+        /* Etiqueta fija bajo cada vehiculo ("Auto 1" / "Auto 2") */
+        .etiqueta-auto {
+            font-weight: 600;
+            font-size: 0.7rem;
+            padding: 1px 8px;
+            border: none;
+            border-radius: 8px;
+            color: #ffffff;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+            transition: opacity 0.3s ease;
+        }
+        .etiqueta-auto::before { display: none; }
+        .etiqueta-auto.auto-1 { background: #2563eb; }
+        .etiqueta-auto.auto-2 { background: #ea580c; }
+        .etiqueta-auto.sin-senal { opacity: 0.45; }
+
+        /* Una tarjeta por vehiculo en el panel */
+        .auto-tarjeta {
+            border-left: 4px solid #2563eb;
+            border-radius: 6px;
+            padding-left: 8px;
+            margin-bottom: 12px;
+        }
+        .auto-tarjeta.auto-2 { border-left-color: #ea580c; }
+        .auto-tarjeta:last-child { margin-bottom: 0; }
+
+        .auto-titulo {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            width: 100%;
+            min-height: 36px;
+            margin-bottom: 6px;
+            padding: 2px 4px;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+            font-size: 0.9rem;
+            font-weight: 700;
+            color: #0f172a;
+            text-align: left;
+            cursor: pointer;
+        }
+        .auto-titulo .auto-emoji { font-size: 1.2rem; }
+        .auto-estado {
+            margin-left: auto;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #dcfce7;
+            color: #166534;
+            font-size: 0.68rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .auto-estado.sin-senal { background: #fef3c7; color: #92400e; }
+        .panel #esperandoAutos { color: #64748b; font-weight: 500; }
+
+        /* Con dos vehiculos el panel crece: en el celular se compacta para dejar ver el mapa */
+        @media (max-width: 640px) {
+            .auto-tarjeta { margin-bottom: 8px; padding-left: 6px; }
+            .auto-titulo { min-height: 30px; margin-bottom: 2px; font-size: 0.85rem; }
+            .auto-tarjeta .ubicacion { padding: 6px 10px; margin-bottom: 6px; }
+            .auto-tarjeta .ubicacion .dato-valor { font-size: 0.82rem; }
+            .auto-tarjeta .datos { gap: 6px; margin-bottom: 6px; }
+            .auto-tarjeta .datos > div { padding: 3px 8px; }
+            .auto-tarjeta details.coordenadas summary { padding: 6px 12px; }
+        }
 </style>
 </head>
 <body>
@@ -477,27 +546,9 @@
         </div>
 
         <div class="panel-cuerpo">
-        <div class="ubicacion">
-            <div class="dato-etiqueta">Dirección</div>
-            <div id="direccion" class="dato-valor">Esperando ubicación...</div>
-            <div class="dato-etiqueta">Barrio / localidad</div>
-            <div id="barrio" class="dato-valor">---</div>
-        </div>
-
-        <div class="datos">
-            <div><div class="dato-etiqueta">Fecha</div><div id="fecha" class="dato-valor">---</div></div>
-            <div><div class="dato-etiqueta">Hora COL</div><div id="hora_col" class="dato-valor">---</div></div>
-        </div>
-
-        <!-- Opciones avanzadas: envíos, latitud y longitud, ocultos hasta que el usuario los pide -->
-        <details class="coordenadas">
-            <summary>Opciones avanzadas</summary>
-            <div class="coordenadas-cuerpo">
-                <div class="fila-completa"><div class="dato-etiqueta">Envíos</div><div id="puntos" class="dato-valor">0</div></div>
-                <div><div class="dato-etiqueta">Latitud</div><div id="lat" class="dato-valor">---</div></div>
-                <div><div class="dato-etiqueta">Longitud</div><div id="lon" class="dato-valor">---</div></div>
-            </div>
-        </details>
+        <!-- Una tarjeta por vehículo: se crea cuando llega su primer dato. -->
+        <div id="esperandoAutos" class="dato-valor">Esperando ubicación...</div>
+        <div id="tarjetasAutos"></div>
         </div>
     </div>
 
@@ -510,22 +561,18 @@
             attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        let marker = L.marker([4.570868, -74.297333], {icon: L.divIcon({html: '🚚', className: 'icono-vivo', iconSize: [30, 30], iconAnchor: [15, 15]})}).addTo(map);
+        // --- Vehiculos ---
+        // Cada vehiculo (la app de cada celular manda "Vehiculo: 1" o "2") tiene
+        // su marcador, su linea de recorrido, su tarjeta en el panel y su
+        // propio control de direccion. Se crean al llegar su primer dato.
+        const CONFIG_AUTOS = {
+            1: { nombre: 'Auto 1', emoji: '🚚', color: '#2563eb' },
+            2: { nombre: 'Auto 2', emoji: '🚛', color: '#ea580c' }
+        };
+        const SIN_SENAL_MS = 30000;   // sin datos por mas de 30 s = "sin senal"
+        const autos = {};
 
         let esPrimeraUbicacion = true;
-
-        // --- Trazado del recorrido ---
-        // Acumula las coordenadas recibidas durante esta sesión de la página.
-        // Al recargar el navegador vuelve a empezar vacío.
-        let puntosRecorrido = [];
-
-        // La polilínea es la línea que une todos los puntos acumulados.
-        // Se crea vacía y se le agregan vértices con addLatLng().
-        const lineaRecorrido = L.polyline([], {
-            color: '#2563eb',
-            weight: 4,
-            opacity: 0.75
-        }).addTo(map);
 
         // ===== Pantalla de carga =====
         // Cubre SOLO el mapa, no toda la página: el usuario puede cambiar a
@@ -584,9 +631,7 @@
         // Se pide al servidor (/api/direccion, que cuida el límite de
         // Nominatim) solo cuando el vehículo se movió al menos 40 m desde la
         // última consulta y pasaron 5 s, para no consultar en cada punto.
-        let ultimaConsulta = null;       // {lat, lon, t}
-        let consultando = false;
-
+        // Cada vehículo lleva su propio control (auto.consulta, auto.consultando).
         function distanciaM(lat1, lon1, lat2, lon2) {
             const r = 6371000, rad = g => g * Math.PI / 180;
             const a = Math.sin(rad(lat2 - lat1) / 2) ** 2 +
@@ -594,30 +639,109 @@
             return 2 * r * Math.asin(Math.sqrt(a));
         }
 
-        async function actualizarDireccion(lat, lon) {
-            if (consultando) return;
+        async function actualizarDireccion(auto, lat, lon) {
+            if (auto.consultando) return;
             const ahora = Date.now();
-            if (ultimaConsulta &&
-                (ahora - ultimaConsulta.t < 5000 ||
-                 distanciaM(lat, lon, ultimaConsulta.lat, ultimaConsulta.lon) < 40)) return;
+            const ult = auto.consulta;
+            if (ult && (ahora - ult.t < 5000 || distanciaM(lat, lon, ult.lat, ult.lon) < 40)) return;
 
-            consultando = true;
+            auto.consultando = true;
             try {
                 const r = await fetch(`/api/direccion?lat=${lat}&lon=${lon}`);
                 if (!r.ok) throw new Error('sin direccion');
                 const d = await r.json();
                 const lugar = [d.barrio, d.ciudad].filter(Boolean).join(', ');
-                document.getElementById('direccion').innerText = d.direccion || d.completa || 'Sin dirección disponible';
-                document.getElementById('barrio').innerText = lugar || '---';
-                ultimaConsulta = { lat: lat, lon: lon, t: ahora };
+                auto.el.direccion.innerText = d.direccion || d.completa || 'Sin dirección disponible';
+                auto.el.barrio.innerText = lugar || '---';
+                auto.consulta = { lat: lat, lon: lon, t: ahora };
             } catch (e) {
                 console.error(e);
                 // Se conserva lo último mostrado; se reintenta con el siguiente punto.
-                ultimaConsulta = ultimaConsulta ? Object.assign(ultimaConsulta, { t: ahora }) : { lat: 0, lon: 0, t: ahora - 3000 };
+                auto.consulta = auto.consulta ? Object.assign(auto.consulta, { t: ahora }) : { lat: 0, lon: 0, t: ahora - 3000 };
             } finally {
-                consultando = false;
+                auto.consultando = false;
             }
         }
+
+        // Crea marcador, linea y tarjeta del vehiculo la primera vez que envia.
+        function crearAuto(id) {
+            const cfg = CONFIG_AUTOS[id];
+            const auto = { id: id, cfg: cfg, puntos: [], ultimoMensaje: 0, consulta: null, consultando: false };
+
+            auto.marker = L.marker([4.570868, -74.297333], {
+                icon: L.divIcon({ html: cfg.emoji, className: 'icono-vivo', iconSize: [30, 30], iconAnchor: [15, 15] }),
+                zIndexOffset: id === 1 ? 0 : 10
+            }).addTo(map);
+            auto.marker.bindTooltip(cfg.nombre, {
+                permanent: true, direction: 'bottom', offset: [0, 12], className: 'etiqueta-auto auto-' + id
+            });
+
+            // La polilínea une todos los puntos recibidos en esta sesión.
+            auto.linea = L.polyline([], { color: cfg.color, weight: 4, opacity: 0.75 }).addTo(map);
+
+            const tarjeta = document.createElement('section');
+            tarjeta.className = 'auto-tarjeta auto-' + id;
+            tarjeta.innerHTML = `
+                <button type="button" class="auto-titulo" title="Centrar el mapa en ${cfg.nombre}">
+                    <span class="auto-emoji">${cfg.emoji}</span><span>${cfg.nombre}</span>
+                    <span class="auto-estado">En línea</span>
+                </button>
+                <div class="ubicacion">
+                    <div class="dato-etiqueta">Dirección</div>
+                    <div class="dato-valor" data-campo="direccion">Esperando ubicación...</div>
+                    <div class="dato-etiqueta">Barrio / localidad</div>
+                    <div class="dato-valor" data-campo="barrio">---</div>
+                </div>
+                <div class="datos">
+                    <div><div class="dato-etiqueta">Fecha</div><div class="dato-valor" data-campo="fecha">---</div></div>
+                    <div><div class="dato-etiqueta">Hora COL</div><div class="dato-valor" data-campo="hora_col">---</div></div>
+                </div>
+                <details class="coordenadas">
+                    <summary>Opciones avanzadas</summary>
+                    <div class="coordenadas-cuerpo">
+                        <div class="fila-completa"><div class="dato-etiqueta">Envíos</div><div class="dato-valor" data-campo="puntos">0</div></div>
+                        <div><div class="dato-etiqueta">Latitud</div><div class="dato-valor" data-campo="lat">---</div></div>
+                        <div><div class="dato-etiqueta">Longitud</div><div class="dato-valor" data-campo="lon">---</div></div>
+                    </div>
+                </details>`;
+            const contenedor = document.getElementById('tarjetasAutos');
+            // El Auto 1 siempre arriba, aunque el Auto 2 envie primero.
+            if (id === 1 && contenedor.firstChild) contenedor.insertBefore(tarjeta, contenedor.firstChild);
+            else contenedor.appendChild(tarjeta);
+            document.getElementById('esperandoAutos').style.display = 'none';
+
+            auto.tarjeta = tarjeta;
+            auto.el = {};
+            tarjeta.querySelectorAll('[data-campo]').forEach(function(e) { auto.el[e.dataset.campo] = e; });
+            auto.estado = tarjeta.querySelector('.auto-estado');
+            tarjeta.querySelector('.auto-titulo').addEventListener('click', function() {
+                map.setView(auto.marker.getLatLng(), Math.max(map.getZoom(), 15));
+            });
+            autos[id] = auto;
+            return auto;
+        }
+
+        function enLinea(auto) {
+            return Date.now() - auto.ultimoMensaje < SIN_SENAL_MS;
+        }
+
+        // Cada 5 s marca como "sin señal" al vehiculo que dejo de enviar.
+        setInterval(function() {
+            Object.values(autos).forEach(function(auto) {
+                const activo = enLinea(auto);
+                const icono = auto.marker.getElement();
+                const etiqueta = auto.marker.getTooltip() && auto.marker.getTooltip().getElement();
+                if (icono) icono.classList.toggle('sin-senal', !activo);
+                if (etiqueta) etiqueta.classList.toggle('sin-senal', !activo);
+                auto.estado.classList.toggle('sin-senal', !activo);
+                if (activo) {
+                    auto.estado.innerText = 'En línea';
+                } else {
+                    const s = Math.round((Date.now() - auto.ultimoMensaje) / 1000);
+                    auto.estado.innerText = 'Sin señal · ' + (s < 90 ? s + ' s' : Math.round(s / 60) + ' min');
+                }
+            });
+        }, 5000);
 
         socket.on('actualizacion_gps', function(msg) {
             // Apenas llega un dato real, se oculta la pantalla de carga
@@ -626,11 +750,16 @@
 
             console.log('Datos recibidos:', msg);
 
-            // Actualizar texto en los óvalos
-            document.getElementById('lat').innerText = msg.latitud;
-            document.getElementById('lon').innerText = msg.longitud;
-            document.getElementById('fecha').innerText = msg.fecha;
-            document.getElementById('hora_col').innerText = msg.hora_col;
+            // Sin "vehiculo" (servidor o app viejos) se trata como el Auto 1.
+            const id = CONFIG_AUTOS[msg.vehiculo] ? Number(msg.vehiculo) : 1;
+            const eraNuevo = !autos[id];
+            const auto = autos[id] || crearAuto(id);
+
+            // Actualizar texto de la tarjeta de ese vehículo
+            auto.el.lat.innerText = msg.latitud;
+            auto.el.lon.innerText = msg.longitud;
+            auto.el.fecha.innerText = msg.fecha;
+            auto.el.hora_col.innerText = msg.hora_col;
 
             // Convertir coordenadas
             const lat = parseFloat(msg.latitud);
@@ -638,22 +767,35 @@
 
             if (!isNaN(lat) && !isNaN(lon)) {
                 const newLatLng = new L.LatLng(lat, lon);
+                auto.ultimoMensaje = Date.now();
+                auto.estado.classList.remove('sin-senal');
+                auto.estado.innerText = 'En línea';
 
                 // Actualizar la posición del pin
-                marker.setLatLng(newLatLng);
+                auto.marker.setLatLng(newLatLng);
+                if (auto.marker.getElement()) auto.marker.getElement().classList.remove('sin-senal');
 
                 // Agregar el punto al recorrido y extender la línea.
-                puntosRecorrido.push(newLatLng);
-                lineaRecorrido.addLatLng(newLatLng);
-                document.getElementById('puntos').innerText = puntosRecorrido.length;
-                actualizarDireccion(lat, lon);
+                auto.puntos.push(newLatLng);
+                auto.linea.addLatLng(newLatLng);
+                auto.el.puntos.innerText = auto.puntos.length;
+                actualizarDireccion(auto, lat, lon);
 
+                const activos = Object.values(autos).filter(enLinea);
                 if (esPrimeraUbicacion) {
                     // Solo la primera vez hacemos zoom inicial automático
                     map.setView(newLatLng, 15);
                     esPrimeraUbicacion = false;
+                } else if (activos.length >= 2) {
+                    // Con los dos vehículos transmitiendo se encuadran ambos; si
+                    // ya se ven completos no se toca la cámara (evita saltos
+                    // cada vez que llega un dato de uno u otro).
+                    const limites = L.latLngBounds(activos.map(a => a.marker.getLatLng()));
+                    if (eraNuevo || !map.getBounds().contains(limites)) {
+                        map.fitBounds(limites.pad(0.3), { maxZoom: 16 });
+                    }
                 } else {
-                    // Centramos la cámara suavemente manteniendo el zoom del usuario
+                    // Solo uno transmite: se sigue suavemente manteniendo el zoom del usuario
                     map.panTo(newLatLng);
                 }
             }
