@@ -576,6 +576,68 @@
         }
         .panel-viajes.colapsado .ficha-todos { display: none; }
 
+        /* Encabezado de cada vehiculo dentro de la lista (vista "Ambos") */
+        .grupo-auto {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 4px 2px;
+            border-left: 4px solid #2563eb;
+            padding-left: 8px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            color: #475569;
+        }
+        .grupo-auto:first-child { padding-top: 2px; }
+
+        /* Selector de vehiculo: Ambos / Auto 1 / Auto 2 */
+        .selector-autos {
+            display: none;
+            gap: 4px;
+            padding: 4px;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid #e2e8f0;
+            border-radius: 999px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+        }
+        .selector-autos.visible { display: flex; }
+        .selector-autos button {
+            flex: 1;
+            min-height: 40px;
+            padding: 4px 10px;
+            border: none;
+            border-radius: 999px;
+            background: transparent;
+            font-family: inherit;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #334155;
+            white-space: nowrap;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .selector-autos button:hover { background: #f1f5f9; }
+        .selector-autos button.activa { background: #2563eb; color: #ffffff; }
+        .flotante-inferior .selector-autos { align-self: center; width: min(100%, 380px); }
+        /* Version dentro del panel (lista de visitas del modo "Por lugar") */
+        .selector-autos.selector-visitas {
+            box-shadow: none;
+            border-radius: 12px;
+            margin: 8px 0;
+        }
+
+        /* Emoji que acompana al circulo animado en la vista "Ambos" */
+        .etiqueta-auto-anim {
+            background: none;
+            border: none;
+            box-shadow: none;
+            padding: 0;
+            font-size: 20px;
+        }
+        .etiqueta-auto-anim::before { display: none; }
+
         .viajes-titulo {
             min-width: 0;
             overflow: hidden;
@@ -1059,6 +1121,8 @@
             /* Fichas mas compactas; si aun asi el texto no cabe en una
                linea, baja a la siguiente (en el celular no hay "pasar el
                mouse" para ver el titulo). */
+            .leyenda-viajes { max-height: 32vh; max-height: 32dvh; }
+            .selector-autos button { padding: 4px 6px; font-size: 0.76rem; }
             .ficha-viaje { border-radius: 16px; padding: 6px 10px; gap: 6px; font-size: 0.76rem; }
             .muestra-viaje { width: 18px; }
             .ficha-viaje > span:last-child { white-space: normal; }
@@ -1187,6 +1251,11 @@
                  (la más reciente primero). -->
             <div id="resultadosLugar">
                 <div id="encabezadoLugar"></div>
+                <div id="filtroVisitas" class="selector-autos selector-visitas" role="group" aria-label="Filtrar visitas por vehículo">
+                    <button type="button" data-vista="todos" class="activa" aria-pressed="true">🚚🚛 Ambos</button>
+                    <button type="button" data-vista="1" aria-pressed="false">🚚 Auto 1</button>
+                    <button type="button" data-vista="2" aria-pressed="false">🚛 Auto 2</button>
+                </div>
                 <div id="listaVisitas"></div>
             </div>
         </div>
@@ -1194,6 +1263,13 @@
 
     <!-- Parte inferior flotante: leyenda de viajes y barra de animación -->
     <div class="flotante-inferior">
+        <!-- Aparece solo si, en la consulta, los dos vehiculos tienen datos -->
+        <div id="selectorAutos" class="selector-autos" role="group" aria-label="Vehículo a mostrar">
+            <button type="button" data-vista="todos" class="activa" aria-pressed="true">🚚🚛 Ambos</button>
+            <button type="button" data-vista="1" aria-pressed="false">🚚 Auto 1</button>
+            <button type="button" data-vista="2" aria-pressed="false">🚛 Auto 2</button>
+        </div>
+
         <div id="panelViajes" class="panel-viajes">
             <button type="button" id="btnViajes" class="viajes-cabecera" aria-expanded="true"
                     aria-controls="leyendaViajes" title="Mostrar u ocultar la lista de viajes">
@@ -1262,7 +1338,9 @@
         let puntosActuales = [];
         let lineaHover = null;         // polilinea invisible y gruesa que recibe el mouse
         let marcadorHover = null;      // circulo del punto bajo el cursor (o tocado)
-        let marcadorAnimacion = null;  // circulo amarillo que recorre la ruta
+        let marcadorAnimacion = null;  // circulo amarillo que se esta moviendo (el del vehiculo del slider)
+        let marcadoresAnim = {};       // vehiculo -> circulo animado (uno por vehiculo en pantalla)
+        let indicesPorAuto = {};       // vehiculo -> posiciones (en puntosActuales) de sus puntos
         let hoverPendiente = false;
         let ultimoLatLngHover = null;
         let cachePixeles = null;       // puntos de la ruta ya proyectados a pixeles (ver indiceMasCercano)
@@ -1298,6 +1376,18 @@
         const COLOR_RUTA_UNICA = '#2563eb';    // ruta sin viajes (Por lugar, o sin marcas)
         const COLOR_SIN_VIAJE = '#94a3b8';     // puntos fuera de todo viaje
         const COLOR_OTROS_VIAJES = '#334155';  // viajes mas antiguos que los 8 recientes
+
+        // --- Vehiculos (cada celular manda "Vehiculo: 1" o "2") ---
+        const CONFIG_AUTOS = {
+            1: { nombre: 'Auto 1', emoji: '🚚', color: '#2563eb' },
+            2: { nombre: 'Auto 2', emoji: '🚛', color: '#ea580c' }
+        };
+        // Respuesta completa de la ultima consulta por fecha ({puntos, viajes, autos, ...}) y
+        // lo que se esta viendo: 'todos' (ambos a la vez), 1 o 2. Se consulta UNA vez; cambiar
+        // de vehiculo solo redibuja, sin volver a pedir datos.
+        let datosConsulta = null;
+        let vistaVehiculo = 'todos';
+        let vistaAmbos = false;    // true mientras se dibujan los dos vehiculos juntos
 
         // id de viaje -> { numero, color, etiqueta }, para el hover y la leyenda
         let infoViajes = new Map();
@@ -1355,6 +1445,8 @@
             lineaHover = null;
             marcadorHover = null;
             marcadorAnimacion = null;
+            marcadoresAnim = {};
+            indicesPorAuto = {};
             ultimoLatLngHover = null;
             cachePixeles = null;
         }
@@ -1414,6 +1506,15 @@
         const fichaTodos = document.getElementById('fichaTodos');
         let fichasViaje = new Map();   // id -> boton
 
+        function agregarGrupoAuto(v, cantidad) {
+            const cfg = CONFIG_AUTOS[v];
+            const grupo = document.createElement('div');
+            grupo.className = 'grupo-auto';
+            grupo.style.borderLeftColor = cfg.color;
+            grupo.textContent = `${cfg.emoji} ${cfg.nombre} · ${cantidad} ${cantidad === 1 ? 'viaje' : 'viajes'}`;
+            leyendaViajes.appendChild(grupo);
+        }
+
         function agregarFicha(id, color, texto) {
             const ficha = document.createElement('button');
             ficha.type = 'button';
@@ -1439,12 +1540,26 @@
         function mostrarLeyendaViajes(viajes, haySinViaje) {
             leyendaViajes.replaceChildren();
             fichasViaje = new Map();
-            const total = viajes.length;
-            for (let r = 0; r < total; r++) {
-                const v = viajes[total - 1 - r];
-                agregarFicha(v.id, colorDeViaje(r), infoViajes.get(v.id).etiqueta);
+            if (vistaAmbos) {
+                // Vista "Ambos": viajes agrupados por vehiculo. Tocar uno cambia
+                // a ese vehiculo y muestra solo ese viaje.
+                [1, 2].forEach(function(v) {
+                    const delAuto = viajes.filter(x => (x.vehiculo || 1) === v);
+                    if (delAuto.length === 0) return;
+                    agregarGrupoAuto(v, delAuto.length);
+                    for (let r = delAuto.length - 1; r >= 0; r--) {
+                        agregarFicha(delAuto[r].id, CONFIG_AUTOS[v].color, infoViajes.get(delAuto[r].id).etiqueta);
+                    }
+                });
+            } else {
+                const total = viajes.length;
+                for (let r = 0; r < total; r++) {
+                    const v = viajes[total - 1 - r];
+                    agregarFicha(v.id, colorDeViaje(r), infoViajes.get(v.id).etiqueta);
+                }
+                if (haySinViaje) agregarFicha(ID_SIN_VIAJE, COLOR_SIN_VIAJE, 'Sin viaje registrado');
             }
-            if (haySinViaje) agregarFicha(ID_SIN_VIAJE, COLOR_SIN_VIAJE, 'Sin viaje registrado');
+            fichaTodos.style.display = vistaAmbos ? 'none' : '';
             actualizarFichasActivas();
             panelViajes.style.display = 'flex';
             // PC: abierto. Celular: plegado, para no tapar el mapa.
@@ -1490,6 +1605,15 @@
         // ya elegido tambien vuelve a todos.
         function seleccionarViaje(id) {
             if (!ultimaConsulta) return;
+            if (vistaAmbos) {
+                // Elegir un viaje desde "Ambos" cambia a ese vehiculo y lo muestra solo.
+                const viaje = ultimaConsulta.viajes.find(x => x.id === id);
+                if (!viaje) return;
+                vistaVehiculo = viaje.vehiculo || 1;
+                actualizarSelectorAutos();
+                aplicarVista(id);
+                return;
+            }
             if (id !== null && id === viajeSeleccionado) id = null;
 
             let puntos = ultimaConsulta.puntos;
@@ -1636,6 +1760,7 @@
             limpiarCapaRecorrido();
             limpiarResumen();
             ocultarResumenPanel();
+            olvidarConsulta();
         }
 
         // ===== Punto bajo el cursor de la ruta =====
@@ -1694,9 +1819,11 @@
             if (!p) return;
 
             const viaje = (p.viaje_id !== undefined && p.viaje_id !== null) ? infoViajes.get(p.viaje_id) : null;
+            const cfgAuto = CONFIG_AUTOS[p.vehiculo] || CONFIG_AUTOS[1];
             let contenido = `<b>${p.hora}</b><br>${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
+            if (vistaAmbos) contenido = `${cfgAuto.emoji} <b>${cfgAuto.nombre}</b><br>` + contenido;
             if (viaje) contenido += `<br>Viaje ${viaje.numero}`;
-            const colorBorde = viaje ? viaje.color : COLOR_RUTA_UNICA;
+            const colorBorde = viaje ? viaje.color : cfgAuto.color;
 
             if (!marcadorHover) {
                 marcadorHover = L.circleMarker([p.lat, p.lon], {
@@ -1725,6 +1852,8 @@
             }
         }
 
+        // 'coordenadas' puede ser una lista de listas (una por vehiculo): Leaflet la
+        // trata como lineas separadas, asi la zona sensible no une un vehiculo con otro.
         function crearLineaHover(coordenadas) {
             lineaHover = L.polyline(coordenadas, {
                 weight: 20,
@@ -1791,27 +1920,53 @@
         // Coloca el circulo en una posicion FRACCIONAL de la ruta (por ejemplo
         // 12.4 = 40% del camino entre el punto 12 y el 13) para que el
         // movimiento sea suave en vez de saltar de punto en punto.
+        // Posicion mas alta de 'arr' (ordenado) que no pasa de p; -1 si no hay.
+        function ubicarIndice(arr, p) {
+            let lo = 0, hi = arr.length - 1, r = -1;
+            while (lo <= hi) {
+                const m = (lo + hi) >> 1;
+                if (arr[m] <= p) { r = m; lo = m + 1; } else { hi = m - 1; }
+            }
+            return r;
+        }
+
+        // Con dos vehiculos, puntosActuales mezcla sus puntos en orden de tiempo
+        // real: cada circulo se mueve entre SUS propios puntos y espera su turno
+        // mientras el otro vehiculo avanza. Con uno solo funciona igual que siempre.
         function posicionarAnimacion(posicion) {
             const n = puntosActuales.length;
             if (n === 0 || !marcadorAnimacion) return;
 
             const p = Math.min(Math.max(posicion, 0), n - 1);
-            const i = Math.floor(p);
-            const fraccion = p - i;
-            const a = puntosActuales[i];
-            const b = puntosActuales[Math.min(i + 1, n - 1)];
 
             if (!zoomEnCurso) {
-                marcadorAnimacion.setLatLng([
-                    a.lat + (b.lat - a.lat) * fraccion,
-                    a.lon + (b.lon - a.lon) * fraccion
-                ]);
+                Object.keys(marcadoresAnim).forEach(function(v) {
+                    const idx = indicesPorAuto[v];
+                    const k = ubicarIndice(idx, p);
+                    let lat, lon;
+                    if (k < 0) {
+                        lat = puntosActuales[idx[0]].lat; lon = puntosActuales[idx[0]].lon;
+                    } else if (k >= idx.length - 1) {
+                        lat = puntosActuales[idx[k]].lat; lon = puntosActuales[idx[k]].lon;
+                    } else {
+                        const a = puntosActuales[idx[k]];
+                        const b = puntosActuales[idx[k + 1]];
+                        const fraccion = (p - idx[k]) / (idx[k + 1] - idx[k]);
+                        lat = a.lat + (b.lat - a.lat) * fraccion;
+                        lon = a.lon + (b.lon - a.lon) * fraccion;
+                    }
+                    marcadoresAnim[v].setLatLng([lat, lon]);
+                });
             }
 
             const indice = Math.round(p);
+            const actual = puntosActuales[indice];
+            // El slider y el "seguir el circulo" se refieren al vehiculo del punto actual.
+            marcadorAnimacion = marcadoresAnim[actual.vehiculo || 1] || marcadorAnimacion;
             sliderRuta.value = indice;
+            const prefijo = vistaAmbos && CONFIG_AUTOS[actual.vehiculo] ? CONFIG_AUTOS[actual.vehiculo].emoji : '🕐';
             etiquetaAnimacion.textContent =
-                `🕐 ${puntosActuales[indice].hora}  ·  envío ${indice + 1} de ${n}`;
+                `${prefijo} ${actual.hora}  ·  envío ${indice + 1} de ${n}`;
             animPosicion = p;
         }
 
@@ -1907,13 +2062,30 @@
 
             animDuracion = Math.min(DURACION_MAX_MS, Math.max(DURACION_MIN_MS, n * MS_POR_PUNTO));
 
-            const primero = puntosActuales[0];
-            marcadorAnimacion = L.circleMarker([primero.lat, primero.lon], {
-                radius: 9, color: '#1e293b', weight: 3,
-                fillColor: '#fbbf24', fillOpacity: 1,
-                interactive: false,
-                bubblingMouseEvents: false
-            }).addTo(capaRecorrido);
+            // Un circulo animado por vehiculo en pantalla.
+            marcadoresAnim = {};
+            indicesPorAuto = {};
+            puntosActuales.forEach(function(p, i) {
+                const v = p.vehiculo || 1;
+                (indicesPorAuto[v] = indicesPorAuto[v] || []).push(i);
+            });
+            Object.keys(indicesPorAuto).forEach(function(v) {
+                const primero = puntosActuales[indicesPorAuto[v][0]];
+                const cfg = CONFIG_AUTOS[v] || CONFIG_AUTOS[1];
+                marcadoresAnim[v] = L.circleMarker([primero.lat, primero.lon], {
+                    radius: 9, color: vistaAmbos ? cfg.color : '#1e293b', weight: 3,
+                    fillColor: '#fbbf24', fillOpacity: 1,
+                    interactive: false,
+                    bubblingMouseEvents: false
+                }).addTo(capaRecorrido);
+                if (vistaAmbos) {
+                    marcadoresAnim[v].bindTooltip(cfg.emoji, {
+                        permanent: true, direction: 'top', offset: [0, -8],
+                        className: 'etiqueta-auto-anim'
+                    });
+                }
+            });
+            marcadorAnimacion = marcadoresAnim[puntosActuales[0].vehiculo || 1];
 
             sliderRuta.min = 0;
             sliderRuta.max = n - 1;
@@ -1952,18 +2124,32 @@
         // viajes (opcional): lista de /api/historial. Si viene con elementos,
         // la ruta se pinta un color por viaje; si no (modo "Por lugar" o sin
         // marcas de viaje), se pinta de un solo color como siempre.
-        function dibujarRecorrido(puntos, viajes) {
+        // ambos (opcional): true cuando 'puntos' mezcla los dos vehiculos.
+        function dibujarRecorrido(puntos, viajes, ambos) {
             limpiarCapaRecorrido();
             viajes = viajes || [];
+            vistaAmbos = Boolean(ambos);
             ultimaConsulta = { puntos: puntos, viajes: viajes };
             viajeSeleccionado = null;
 
             if (viajes.length > 0) {
-                viajes.forEach(function(v, i) {
-                    infoViajes.set(v.id, {
-                        numero: i + 1,
-                        color: colorDeViaje(viajes.length - 1 - i),
-                        etiqueta: etiquetaViaje(i + 1, v)
+                // La numeracion ("Viaje 3") es por vehiculo, en orden cronologico.
+                const porAuto = {};
+                viajes.forEach(function(v) {
+                    const a = v.vehiculo || 1;
+                    (porAuto[a] = porAuto[a] || []).push(v);
+                });
+                Object.keys(porAuto).forEach(function(a) {
+                    const lista = porAuto[a];
+                    lista.forEach(function(v, i) {
+                        infoViajes.set(v.id, {
+                            numero: i + 1,
+                            // En "Ambos" cada vehiculo va de su color; solo un vehiculo
+                            // se pinta con los 8 colores de viaje.
+                            color: vistaAmbos ? (CONFIG_AUTOS[a] || CONFIG_AUTOS[1]).color
+                                              : colorDeViaje(lista.length - 1 - i),
+                            etiqueta: etiquetaViaje(i + 1, v)
+                        });
                     });
                 });
                 const haySinViaje = puntos.some(p => idViajeDe(p) === ID_SIN_VIAJE);
@@ -1977,73 +2163,97 @@
             limpiarTrazo();
             puntosActuales = puntos;
 
-            const coordenadas = puntos.map(p => [p.lat, p.lon]);
-
             // interactive: false: este trazo solo se ve. Quien recibe el mouse
-            // es la polilinea invisible de crearLineaHover() (una sola, sobre
-            // toda la ruta). Ademas, bubblingMouseEvents: false evita que un
-            // clic sobre la ruta "atraviese" la linea y coloque un pin.
+            // es la polilinea invisible de crearLineaHover(), sobre toda la
+            // ruta. Ademas, bubblingMouseEvents: false evita que un clic sobre
+            // la ruta "atraviese" la linea y coloque un pin.
             const estiloTrazo = { weight: 4, opacity: 0.8, interactive: false, bubblingMouseEvents: false };
 
-            if (infoViajes.size === 0) {
-                L.polyline(coordenadas, Object.assign({ color: COLOR_RUTA_UNICA }, estiloTrazo))
-                    .addTo(capaRecorrido);
-            } else {
-                segmentarPorViaje(puntos).forEach(function(seg) {
-                    const info = (seg.viajeId === null) ? null : infoViajes.get(seg.viajeId);
-                    const color = info ? info.color : COLOR_SIN_VIAJE;
-                    if (seg.puntos.length > 1) {
-                        L.polyline(seg.puntos.map(p => [p.lat, p.lon]),
-                                   Object.assign({ color: color }, estiloTrazo)).addTo(capaRecorrido);
+            // Cada vehiculo se dibuja por separado (sus puntos vienen mezclados
+            // en orden de tiempo cuando se ven los dos).
+            const porAuto = new Map();
+            puntos.forEach(function(p) {
+                const v = p.vehiculo || 1;
+                if (!porAuto.has(v)) porAuto.set(v, []);
+                porAuto.get(v).push(p);
+            });
+
+            const listasHover = [];
+            porAuto.forEach(function(pts, v) {
+                const cfg = CONFIG_AUTOS[v] || CONFIG_AUTOS[1];
+                const coordenadas = pts.map(p => [p.lat, p.lon]);
+                listasHover.push(coordenadas);
+
+                if (vistaAmbos || infoViajes.size === 0) {
+                    // Sin viajes (o en "Ambos"): un solo color por vehiculo.
+                    if (pts.length > 1) {
+                        L.polyline(coordenadas, Object.assign({ color: cfg.color }, estiloTrazo))
+                            .addTo(capaRecorrido);
                     } else {
-                        // Un tramo de un solo punto no forma linea: se dibuja un circulo.
-                        L.circleMarker([seg.puntos[0].lat, seg.puntos[0].lon], {
+                        L.circleMarker(coordenadas[0], {
                             radius: 5, color: '#ffffff', weight: 1,
-                            fillColor: color, fillOpacity: 1,
+                            fillColor: cfg.color, fillOpacity: 1,
                             interactive: false, bubblingMouseEvents: false
                         }).addTo(capaRecorrido);
                     }
-                });
-            }
+                } else {
+                    segmentarPorViaje(pts).forEach(function(seg) {
+                        const info = (seg.viajeId === null) ? null : infoViajes.get(seg.viajeId);
+                        const color = info ? info.color : COLOR_SIN_VIAJE;
+                        if (seg.puntos.length > 1) {
+                            L.polyline(seg.puntos.map(p => [p.lat, p.lon]),
+                                       Object.assign({ color: color }, estiloTrazo)).addTo(capaRecorrido);
+                        } else {
+                            // Un tramo de un solo punto no forma linea: se dibuja un circulo.
+                            L.circleMarker([seg.puntos[0].lat, seg.puntos[0].lon], {
+                                radius: 5, color: '#ffffff', weight: 1,
+                                fillColor: color, fillOpacity: 1,
+                                interactive: false, bubblingMouseEvents: false
+                            }).addTo(capaRecorrido);
+                        }
+                    });
+                }
 
-            crearLineaHover(coordenadas);
+                const inicio = pts[0];
+                const fin = pts[pts.length - 1];
+                const rotulo = vistaAmbos ? cfg.emoji + ' ' : '';
 
-            const inicio = puntos[0];
-            const fin = puntos[puntos.length - 1];
+                // Circulos de color en lugar de pines, con etiqueta permanente
+                // (no hace falta clic para saber cual es cual) y el popup con
+                // la hora exacta al hacer clic.
+                marcadorInicio = L.circleMarker([inicio.lat, inicio.lon], {
+                    radius: 9, color: '#ffffff', weight: 2,
+                    fillColor: '#16a34a', fillOpacity: 1,
+                    bubblingMouseEvents: false
+                }).addTo(capaRecorrido)
+                  .bindPopup(`<b>${rotulo}Inicio</b><br>${inicio.hora}`)
+                  .bindTooltip(`${rotulo}Inicio`, {
+                      permanent: true,
+                      direction: 'top',
+                      offset: [0, -10],
+                      className: 'etiqueta-inicio'
+                  });
 
-            // Circulos de color en lugar de pines, con etiqueta permanente
-            // (no hace falta clic para saber cual es cual) y el popup con
-            // la hora exacta al hacer clic.
-            marcadorInicio = L.circleMarker([inicio.lat, inicio.lon], {
-                radius: 9, color: '#ffffff', weight: 2,
-                fillColor: '#16a34a', fillOpacity: 1,
-                bubblingMouseEvents: false
-            }).addTo(capaRecorrido)
-              .bindPopup(`<b>Inicio</b><br>${inicio.hora}`)
-              .bindTooltip('Inicio', {
-                  permanent: true,
-                  direction: 'top',
-                  offset: [0, -10],
-                  className: 'etiqueta-inicio'
-              });
+                marcadorFin = L.circleMarker([fin.lat, fin.lon], {
+                    radius: 9, color: '#ffffff', weight: 2,
+                    fillColor: '#dc2626', fillOpacity: 1,
+                    bubblingMouseEvents: false
+                }).addTo(capaRecorrido)
+                  .bindPopup(`<b>${rotulo}Fin</b><br>${fin.hora}`)
+                  .bindTooltip(`${rotulo}Fin`, {
+                      permanent: true,
+                      direction: 'top',
+                      offset: [0, -10],
+                      className: 'etiqueta-fin'
+                  });
+            });
 
-            marcadorFin = L.circleMarker([fin.lat, fin.lon], {
-                radius: 9, color: '#ffffff', weight: 2,
-                fillColor: '#dc2626', fillOpacity: 1,
-                bubblingMouseEvents: false
-            }).addTo(capaRecorrido)
-              .bindPopup(`<b>Fin</b><br>${fin.hora}`)
-              .bindTooltip('Fin', {
-                  permanent: true,
-                  direction: 'top',
-                  offset: [0, -10],
-                  className: 'etiqueta-fin'
-              });
+            crearLineaHover(listasHover);
 
             // fitBounds encuadra toda la ruta. El maxZoom evita que, si el
             // vehículo estuvo casi quieto, el mapa se acerque tanto que se
             // pierda el contexto de las calles.
-            map.fitBounds(L.latLngBounds(coordenadas), {
+            map.fitBounds(L.latLngBounds(puntos.map(p => [p.lat, p.lon])), {
                 padding: [40, 40],
                 maxZoom: 17
             });
@@ -2051,6 +2261,103 @@
             // Al final: la barra y el circulo animado se crean cuando la ruta
             // ya esta dibujada y encuadrada.
             prepararAnimacion();
+        }
+
+        // ===== Vista por vehiculo =====
+        // Una consulta por fecha trae los dos vehiculos. Si los dos tienen datos
+        // se empieza en "Ambos" y el usuario puede quedarse con uno (opcional);
+        // si solo uno tiene datos, se muestra directo.
+        const selectorAutos = document.getElementById('selectorAutos');
+
+        function actualizarSelectorAutos() {
+            const visible = Boolean(datosConsulta) && datosConsulta.autos.length === 2;
+            selectorAutos.classList.toggle('visible', visible);
+            selectorAutos.querySelectorAll('button').forEach(function(b) {
+                const activo = b.dataset.vista === String(vistaVehiculo);
+                b.classList.toggle('activa', activo);
+                b.setAttribute('aria-pressed', String(activo));
+            });
+        }
+
+        // Olvida la consulta por fecha (se usa al limpiar o al pasar a otra ruta).
+        function olvidarConsulta() {
+            datosConsulta = null;
+            vistaAmbos = false;
+            actualizarSelectorAutos();
+        }
+
+        function textoVistaVehiculo() {
+            if (!datosConsulta) return '';
+            if (datosConsulta.autos.length === 1) {
+                const cfg = CONFIG_AUTOS[datosConsulta.autos[0]];
+                return `${cfg.emoji} Solo el ${cfg.nombre} tiene datos`;
+            }
+            if (vistaVehiculo === 'todos') return '🚚🚛 Viendo ambos autos';
+            const cfg = CONFIG_AUTOS[vistaVehiculo];
+            return `${cfg.emoji} Viendo el ${cfg.nombre}`;
+        }
+
+        // Dibuja lo que corresponde a la vista actual y actualiza las capsulas.
+        // idViajeInicial: viaje a mostrar solo (al elegirlo desde "Ambos").
+        function aplicarVista(idViajeInicial) {
+            if (!datosConsulta) return;
+            const d = datosConsulta;
+            const ambos = (vistaVehiculo === 'todos');
+            let puntos, viajes;
+            if (ambos) {
+                // Orden de tiempo real entre los dos vehiculos (t = ms desde 1970, UTC).
+                puntos = d.puntos.slice().sort((a, b) => (a.t || 0) - (b.t || 0));
+                viajes = d.viajes;
+            } else {
+                puntos = d.puntos.filter(p => p.vehiculo === vistaVehiculo);
+                viajes = d.viajes.filter(v => (v.vehiculo || 1) === vistaVehiculo);
+            }
+
+            dibujarRecorrido(puntos, viajes, ambos);
+
+            document.getElementById('totalPuntos').innerText = puntos.length;
+            document.getElementById('horaInicio').innerText = puntos[0].hora;
+            document.getElementById('horaFin').innerText = puntos[puntos.length - 1].hora;
+
+            if (idViajeInicial !== undefined && idViajeInicial !== null) seleccionarViaje(idViajeInicial);
+            mostrarResumenPanel();
+        }
+
+        function cambiarVista(valor) {
+            if (!datosConsulta || datosConsulta.autos.length < 2) return;
+            vistaVehiculo = (valor === 'todos') ? 'todos' : Number(valor);
+            actualizarSelectorAutos();
+            aplicarVista();
+        }
+
+        selectorAutos.addEventListener('click', function(e) {
+            const boton = e.target.closest('button[data-vista]');
+            if (boton) cambiarVista(boton.dataset.vista);
+        });
+
+        // Punto de entrada de la consulta por fecha (reemplaza a dibujarRecorrido).
+        function dibujarConsulta(datos) {
+            // Un servidor viejo no manda "vehiculo": todo es del Auto 1.
+            datos.puntos.forEach(function(p) { if (p.vehiculo == null) p.vehiculo = 1; });
+            datos.viajes.forEach(function(v) { if (v.vehiculo == null) v.vehiculo = 1; });
+
+            datosConsulta = datos;
+            datos.autos = [1, 2].filter(v => datos.puntos.some(p => p.vehiculo === v));
+            vistaVehiculo = datos.autos.length === 2 ? 'todos' : datos.autos[0];
+            actualizarSelectorAutos();
+            aplicarVista();
+        }
+
+        // Texto del aviso de recorte para el resumen del panel ('' si no hubo).
+        function avisoRecorte(datos) {
+            if (!datos.truncado) return '';
+            const pv = datos.por_vehiculo || {};
+            const cortados = [1, 2].filter(v => pv[v] && pv[v].truncado);
+            if (cortados.length === 0) return `⚠ Recortado a ${datos.total} envíos`;
+            if (datos.autos.length === 2) {
+                return '⚠ Recortado: ' + cortados.map(v => `${CONFIG_AUTOS[v].emoji} ${pv[v].total} envíos`).join(' · ');
+            }
+            return `⚠ Recortado a ${pv[cortados[0]].total} envíos`;
         }
 
         // Resalta, encima de la ruta ya dibujada, los puntos que quedaron
@@ -2136,6 +2443,7 @@
             capaLugar.clearLayers();
             ultimoLugar = null;
             ocultarResumenPanel();
+            olvidarConsulta();
 
             boton.disabled = true;
             boton.innerText = 'Consultando...';
@@ -2161,12 +2469,7 @@
                     return;
                 }
 
-                dibujarRecorrido(datos.puntos, datos.viajes);
-
-                document.getElementById('totalPuntos').innerText = datos.total;
-                document.getElementById('horaInicio').innerText = datos.puntos[0].hora;
-                document.getElementById('horaFin').innerText =
-                    datos.puntos[datos.total - 1].hora;
+                dibujarConsulta(datos);
 
                 if (datos.truncado) {
                     // El aviso queda en el panel (y en el resumen) para quien
@@ -2177,7 +2480,7 @@
                         'info'
                     );
                 }
-                fijarResumenPanel(null, datos.truncado ? datos.total : 0);
+                fijarResumenPanel(null, avisoRecorte(datos));
                 // Ruta dibujada: el panel se pliega para dejar ver el mapa
                 // (los campos conservan lo que el usuario eligio).
                 colapsarPanel(true);
@@ -2223,7 +2526,7 @@
 
         // ----- Resumen del filtro, bajo el selector de modo -----
         const resumenPanel = document.getElementById('resumenPanel');
-        // { desde: Date, hasta: Date|null, lugar: string|null, truncado: number|0 }
+        // { desde: Date, hasta: Date|null, lugar: string|null, aviso: string }
         let resumenEstado = null;
 
         function textoFechaCorta(d, conAnio) {
@@ -2248,7 +2551,7 @@
                 resumenPanel.classList.remove('con-texto');
                 return;
             }
-            const { desde, hasta, lugar, truncado } = resumenEstado;
+            const { desde, hasta, lugar, aviso } = resumenEstado;
             const anioActual = new Date().getFullYear();
             const conAnio = desde.getFullYear() !== anioActual ||
                 (hasta && hasta.getFullYear() !== anioActual) ||
@@ -2256,16 +2559,18 @@
             const lineas = [`📅 ${textoFechaCorta(desde, conAnio)} → ` +
                             (hasta ? textoFechaCorta(hasta, conAnio) : 'ahora')];
             if (lugar) lineas.push(`📍 ${lugar}`);
+            const vista = textoVistaVehiculo();
+            if (vista) lineas.push(vista);
             lineas.forEach(function(texto) {
                 const s = document.createElement('span');
                 s.textContent = texto;
                 s.title = texto;
                 resumenPanel.appendChild(s);
             });
-            if (truncado) {
+            if (aviso) {
                 const s = document.createElement('span');
                 s.className = 'resumen-aviso';
-                s.textContent = `⚠ Recortado a ${truncado} envíos`;
+                s.textContent = aviso;
                 resumenPanel.appendChild(s);
             }
             resumenPanel.classList.add('con-texto');
@@ -2274,14 +2579,14 @@
         // Fotografia del filtro en el momento de consultar: si despues el
         // usuario cambia los campos sin consultar, el resumen sigue diciendo
         // lo que realmente se esta viendo.
-        function fijarResumenPanel(lugar, truncado) {
+        function fijarResumenPanel(lugar, aviso) {
             const desde = pickerDesde.selectedDates[0];
             if (!desde) { ocultarResumenPanel(); return; }
             resumenEstado = {
                 desde: desde,
                 hasta: pickerHasta.selectedDates[0] || null,
                 lugar: lugar || null,
-                truncado: truncado || 0
+                aviso: aviso || ''
             };
             mostrarResumenPanel();
         }
@@ -2643,6 +2948,7 @@
             ultimoLugar = null;
             limpiarResumen();
             ocultarResumenPanel();
+            olvidarConsulta();
             if (enfocar && !inputDireccion.disabled) inputDireccion.focus();
         }
 
@@ -2672,17 +2978,18 @@
         }
 
         // textoFiltro describe el rango de fechas aplicado ('' si no hay).
-        function mostrarVisitas(visitas, nombreLugar, radioMetros, textoFiltro) {
-            resultadosLugar.style.display = 'block';
-            const lineaFiltro = textoFiltro
-                ? `<br><span class="radio-info">🗓️ ${textoFiltro}</span>`
-                : '';
-            encabezadoLugar.innerHTML =
-                `📍 ${nombreLugar}<br><span class="radio-info">Radio de búsqueda: ${radioMetros} metros</span>${lineaFiltro}`;
+        // Visitas de la ultima busqueda por lugar y filtro de vehiculo ('todos', 1 o 2)
+        let visitasLugar = [];
+        let filtroVehiculoVisitas = 'todos';
+        const filtroVisitas = document.getElementById('filtroVisitas');
 
+        function pintarVisitas(textoFiltro) {
             listaVisitas.innerHTML = '';
 
-            if (visitas.length === 0) {
+            const visibles = visitasLugar.filter(v =>
+                filtroVehiculoVisitas === 'todos' || (v.vehiculo || 1) === filtroVehiculoVisitas);
+
+            if (visibles.length === 0) {
                 listaVisitas.innerHTML = textoFiltro
                     ? '<div class="visita-vacia">No se encontraron visitas a este lugar en ese rango de fechas.</div>'
                     : '<div class="visita-vacia">No se encontraron visitas a este lugar.</div>';
@@ -2692,15 +2999,18 @@
             // El backend las entrega de la mas antigua a la mas reciente; aqui
             // se muestran al reves. entrada_iso (AAAA-MM-DDTHH:MM:SS) se puede
             // ordenar como texto porque el formato es de ancho fijo.
-            const ordenadas = visitas.slice().sort(
+            const ordenadas = visibles.slice().sort(
                 (a, b) => b.entrada_iso.localeCompare(a.entrada_iso)
             );
+            const variosAutos = new Set(visitasLugar.map(v => v.vehiculo || 1)).size > 1;
 
             ordenadas.forEach(function(visita) {
                 const item = document.createElement('div');
                 item.className = 'visita-item';
+                const cfg = CONFIG_AUTOS[visita.vehiculo || 1] || CONFIG_AUTOS[1];
+                const auto = variosAutos ? `${cfg.emoji} ` : '';
                 item.innerHTML = `
-                    <span class="visita-hora">🕐 ${visita.entrada} → ${visita.salida}</span>
+                    <span class="visita-hora">${auto}🕐 ${visita.entrada} → ${visita.salida}</span>
                     <span class="visita-detalle">${visita.puntos} envío(s)</span>
                 `;
                 item.addEventListener('click', function() {
@@ -2710,6 +3020,42 @@
                 });
                 listaVisitas.appendChild(item);
             });
+        }
+
+        filtroVisitas.addEventListener('click', function(e) {
+            const boton = e.target.closest('button[data-vista]');
+            if (!boton) return;
+            filtroVehiculoVisitas = (boton.dataset.vista === 'todos') ? 'todos' : Number(boton.dataset.vista);
+            actualizarFiltroVisitas();
+            pintarVisitas(ultimoTextoFiltro);
+        });
+
+        function actualizarFiltroVisitas() {
+            const variosAutos = new Set(visitasLugar.map(v => v.vehiculo || 1)).size > 1;
+            filtroVisitas.classList.toggle('visible', variosAutos);
+            filtroVisitas.querySelectorAll('button').forEach(function(b) {
+                const activo = b.dataset.vista === String(filtroVehiculoVisitas);
+                b.classList.toggle('activa', activo);
+                b.setAttribute('aria-pressed', String(activo));
+            });
+        }
+
+        let ultimoTextoFiltro = '';
+
+        // textoFiltro describe el rango de fechas aplicado ('' si no hay).
+        function mostrarVisitas(visitas, nombreLugar, radioMetros, textoFiltro) {
+            resultadosLugar.style.display = 'block';
+            const lineaFiltro = textoFiltro
+                ? `<br><span class="radio-info">🗓️ ${textoFiltro}</span>`
+                : '';
+            encabezadoLugar.innerHTML =
+                `📍 ${nombreLugar}<br><span class="radio-info">Radio de búsqueda: ${radioMetros} metros</span>${lineaFiltro}`;
+
+            visitasLugar = visitas;
+            filtroVehiculoVisitas = 'todos';
+            ultimoTextoFiltro = textoFiltro;
+            actualizarFiltroVisitas();
+            pintarVisitas(textoFiltro);
         }
 
         // Al hacer clic en una visita, se dibuja la ruta completa del viaje
@@ -2724,7 +3070,8 @@
             ocultarMensaje();
 
             try {
-                const url = `/api/historial?desde=${desde}&hasta=${hasta}`;
+                // Solo el vehiculo de la visita: la ruta de otro vehiculo no pinta nada aqui.
+                const url = `/api/historial?desde=${desde}&hasta=${hasta}&vehiculo=${visita.vehiculo || 1}`;
                 const respuesta = await fetch(url);
                 const datos = await respuesta.json();
 
@@ -2734,6 +3081,7 @@
                     return;
                 }
 
+                olvidarConsulta();
                 dibujarRecorrido(datos.puntos);
                 // Pinta con otro color el tramo que paso por el lugar buscado.
                 resaltarTramoLugar(datos.puntos);
@@ -2809,6 +3157,7 @@
             ultimoLugar = null;
             limpiarResumen();
             ocultarResumenPanel();
+            olvidarConsulta();
 
             try {
                 const lat = parseFloat(lugar.lat);
@@ -2831,7 +3180,7 @@
 
                 // La lista de visitas vive en el panel: se abre para verla.
                 // El resumen (fechas + lugar) aparece cuando se pliegue.
-                fijarResumenPanel(lugar.display_name, 0);
+                fijarResumenPanel(lugar.display_name, '');
                 colapsarPanel(false);
 
                 if (datos.total_visitas === 0) {
