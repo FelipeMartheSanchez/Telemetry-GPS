@@ -628,15 +628,18 @@
             margin: 8px 0;
         }
 
-        /* Emoji que acompana al circulo animado en la vista "Ambos" */
-        .etiqueta-auto-anim {
+        /* Emoji del auto que recorre la ruta (reemplaza al circulo amarillo) */
+        .auto-anim-icono {
             background: none;
             border: none;
-            box-shadow: none;
-            padding: 0;
-            font-size: 20px;
+            font-size: 26px;
+            line-height: 30px;
+            text-align: center;
+            pointer-events: none;
+            /* Aureola blanca + sombra para que se vea sobre cualquier mapa */
+            text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 6px #fff;
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,.45));
         }
-        .etiqueta-auto-anim::before { display: none; }
 
         .viajes-titulo {
             min-width: 0;
@@ -1894,7 +1897,7 @@
         map.on('click', ocultarPuntoHover);
 
         // ===== Animacion de la ruta con slider =====
-        // Un circulo amarillo recorre la ruta desde el primer punto hasta el
+        // Un emoji (el del auto) recorre la ruta desde el primer punto hasta el
         // ultimo. La duracion total va de 3 a 10 segundos sin importar cuantos
         // puntos haya, y se mide por TIEMPO (no "N puntos por cuadro"): asi una
         // ruta de 5000 puntos y una de 20 puntos tardan un tiempo razonable.
@@ -2072,18 +2075,18 @@
             Object.keys(indicesPorAuto).forEach(function(v) {
                 const primero = puntosActuales[indicesPorAuto[v][0]];
                 const cfg = CONFIG_AUTOS[v] || CONFIG_AUTOS[1];
-                marcadoresAnim[v] = L.circleMarker([primero.lat, primero.lon], {
-                    radius: 9, color: vistaAmbos ? cfg.color : '#1e293b', weight: 3,
-                    fillColor: '#fbbf24', fillOpacity: 1,
+                // El emoji del auto (🚚 Auto 1, 🚛 Auto 2) hace de marcador animado.
+                marcadoresAnim[v] = L.marker([primero.lat, primero.lon], {
+                    icon: L.divIcon({
+                        className: 'auto-anim-icono',
+                        html: cfg.emoji,
+                        iconSize: [30, 30],
+                        iconAnchor: [15, 15]
+                    }),
                     interactive: false,
-                    bubblingMouseEvents: false
+                    keyboard: false,
+                    zIndexOffset: 1000
                 }).addTo(capaRecorrido);
-                if (vistaAmbos) {
-                    marcadoresAnim[v].bindTooltip(cfg.emoji, {
-                        permanent: true, direction: 'top', offset: [0, -8],
-                        className: 'etiqueta-auto-anim'
-                    });
-                }
             });
             marcadorAnimacion = marcadoresAnim[puntosActuales[0].vehiculo || 1];
 
@@ -2412,7 +2415,7 @@
             // por encima del resaltado.
             if (marcadorInicio) marcadorInicio.bringToFront();
             if (marcadorFin) marcadorFin.bringToFront();
-            if (marcadorAnimacion) marcadorAnimacion.bringToFront();
+            // El emoji animado es un marcador (zIndexOffset alto): ya queda sobre las lineas.
 
             mostrarLeyendaTramo(radio);
         }
