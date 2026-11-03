@@ -377,8 +377,12 @@
         #pantallaCarga.error #btnCerrarCarga {
             display: inline-block;
         }
-        .icono-vivo { font-size: 26px; text-align: center; line-height: 30px; transition: opacity 0.3s ease; }
+        .icono-vivo { font-size: 26px; text-align: center; line-height: 30px; cursor: pointer;
+                      transition: opacity 0.3s ease, font-size 0.2s ease; }
         .icono-vivo.sin-senal { opacity: 0.45; }
+        /* Auto enfocado (se tocó su emoji): un poco más grande y con aureola */
+        .icono-vivo.enfocado { font-size: 34px;
+                               filter: drop-shadow(0 0 3px #ffffff) drop-shadow(0 0 7px rgba(37, 99, 235, 0.85)); }
 
         /* Etiqueta fija bajo cada vehiculo ("Auto 1" / "Auto 2") */
         .etiqueta-auto {
@@ -446,6 +450,50 @@
             .auto-tarjeta .datos { gap: 6px; margin-bottom: 6px; }
             .auto-tarjeta .datos > div { padding: 3px 8px; }
             .auto-tarjeta details.coordenadas summary { padding: 6px 12px; }
+        }
+
+        /* Selector de enfoque: Ambos / Auto 1 / Auto 2 (solo si los dos autos ya enviaron) */
+        .selector-enfoque {
+            display: none;
+            position: fixed;
+            left: 50%;
+            bottom: 24px;
+            transform: translateX(-50%);
+            z-index: 1100;
+            gap: 4px;
+            padding: 4px;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid #e2e8f0;
+            border-radius: 999px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+        }
+        .selector-enfoque.visible { display: flex; }
+        .selector-enfoque button {
+            min-height: 40px;
+            padding: 4px 14px;
+            border: none;
+            border-radius: 999px;
+            background: transparent;
+            font-family: inherit;
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: #334155;
+            white-space: nowrap;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .selector-enfoque button:hover { background: #f1f5f9; }
+        .selector-enfoque button.activa { background: #2563eb; color: #ffffff; }
+        .auto-tarjeta.enfocada { box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.45); }
+
+        /* En el celular la marca ocupa el borde inferior: el selector sube sobre ella
+           y deja libre la columna del zoom a la derecha. */
+        @media (max-width: 640px) {
+            .selector-enfoque {
+                bottom: calc(84px + env(safe-area-inset-bottom, 0px));
+                max-width: calc(100vw - 120px);
+            }
+            .selector-enfoque button { padding: 4px 10px; font-size: 0.76rem; }
         }
 </style>
 </head>
@@ -552,6 +600,14 @@
         </div>
     </div>
 
+    <!-- Enfoque de la cámara: aparece cuando los dos autos ya enviaron. Tocar el
+         emoji de un auto en el mapa hace lo mismo que el botón de ese auto. -->
+    <div id="selectorEnfoque" class="selector-enfoque" role="group" aria-label="Enfocar vehículo">
+        <button type="button" data-enfoque="todos" class="activa" aria-pressed="true">🚚🚛 Ambos</button>
+        <button type="button" data-enfoque="1" aria-pressed="false">🚚 Auto 1</button>
+        <button type="button" data-enfoque="2" aria-pressed="false">🚛 Auto 2</button>
+    </div>
+
     <script>
         // Inicializar Mapa centrado en Colombia por defecto
         const map = L.map('map', { zoomControl: false }).setView([4.570868, -74.297333], 6);
@@ -573,6 +629,118 @@
         const autos = {};
 
         let esPrimeraUbicacion = true;
+
+        // ===== Enfoque de la cámara =====
+        // 'todos': se ven los dos autos (comportamiento de siempre). 1 o 2: la cámara
+        // sigue a ese auto y los datos del otro no la mueven. Se elige tocando el emoji
+        // del auto en el mapa (o su botón / el título de su tarjeta); tocar otra vez el
+        // mismo auto vuelve a 'todos'.
+        let enfoque = 'todos';
+        const selectorEnfoque = document.getElementById('selectorEnfoque');
+
+        // Zona del mapa que no tapan los paneles flotantes (en pixeles del mapa):
+        // en PC, a la derecha del panel; en el celular, entre el panel de arriba y la
+        // marca / selector de abajo. La camara centra y encuadra los autos AHI, para
+        // que no queden escondidos detras del panel.
+        function zonaLibre() {
+            const tam = map.getSize();
+            const r = panel.getBoundingClientRect();
+            const angosta = window.matchMedia('(max-width: 640px)').matches;
+            if (!angosta) return { x0: Math.min(r.right + 12, tam.x * 0.6), y0: 0, x1: tam.x, y1: tam.y };
+            let y1 = tam.y;
+            [document.querySelector('.marca'), selectorEnfoque].forEach(function(el) {
+                if (el && getComputedStyle(el).display !== 'none') y1 = Math.min(y1, el.getBoundingClientRect().top - 8);
+            });
+            const y0 = r.bottom + 8;
+            // Si el panel (abierto) ocupa casi todo el celular no queda zona libre:
+            // se usa todo el mapa (fijarEnfoque pliega el panel antes de enfocar).
+            if (y1 - y0 < 120) return { x0: 0, y0: 0, x1: tam.x, y1: y1 };
+            return { x0: 0, y0: y0, x1: tam.x, y1: y1 };
+        }
+
+        // En el celular, si el panel abierto tapa el mapa, se pliega para que el auto
+        // enfocado se vea (el encabezado del panel queda para volver a abrirlo).
+        function plegarPanelSiTapa() {
+            if (!window.matchMedia('(max-width: 640px)').matches) return;
+            if (panel.classList.contains('colapsado')) return;
+            const z = zonaLibre();
+            if (z.y0 === 0 && panel.getBoundingClientRect().bottom > 0) {
+                panel.classList.add('colapsado');
+                btnPanel.setAttribute('aria-expanded', 'false');
+            }
+        }
+
+        // Centro del mapa que deja 'latlng' en el centro de la zona libre.
+        function centroParaZona(latlng, zoom) {
+            const z = zonaLibre(), tam = map.getSize();
+            const desp = L.point((z.x0 + z.x1) / 2 - tam.x / 2, (z.y0 + z.y1) / 2 - tam.y / 2);
+            return map.unproject(map.project(latlng, zoom).subtract(desp), zoom);
+        }
+
+        function encuadrar(latlngs) {
+            const z = zonaLibre(), tam = map.getSize();
+            map.fitBounds(L.latLngBounds(latlngs), {
+                paddingTopLeft: [z.x0 + 24, z.y0 + 24],
+                paddingBottomRight: [tam.x - z.x1 + 24, tam.y - z.y1 + 24],
+                maxZoom: 16
+            });
+        }
+
+        function actualizarSelectorEnfoque() {
+            selectorEnfoque.classList.toggle('visible', Boolean(autos[1] && autos[2]));
+            selectorEnfoque.querySelectorAll('button').forEach(function(b) {
+                const activo = b.dataset.enfoque === String(enfoque);
+                b.classList.toggle('activa', activo);
+                b.setAttribute('aria-pressed', String(activo));
+            });
+            Object.values(autos).forEach(function(a) {
+                const enfocado = (enfoque === a.id);
+                const icono = a.marker.getElement();
+                if (icono) icono.classList.toggle('enfocado', enfocado);
+                a.tarjeta.classList.toggle('enfocada', enfocado);
+            });
+        }
+
+        function fijarEnfoque(valor) {
+            enfoque = (valor === 'todos') ? 'todos' : Number(valor);
+            if (enfoque !== 'todos' && !autos[enfoque]) enfoque = 'todos';
+            actualizarSelectorEnfoque();
+            plegarPanelSiTapa();
+
+            if (enfoque === 'todos') {
+                const lista = Object.values(autos);
+                const activos = lista.filter(enLinea);
+                const usar = activos.length ? activos : lista;
+                if (usar.length >= 2) {
+                    encuadrar(usar.map(a => a.marker.getLatLng()));
+                } else if (usar.length === 1) {
+                    map.panTo(centroParaZona(usar[0].marker.getLatLng(), map.getZoom()));
+                }
+            } else {
+                const zoom = Math.max(map.getZoom(), 16);
+                map.setView(centroParaZona(autos[enfoque].marker.getLatLng(), zoom), zoom, { animate: true });
+            }
+        }
+
+        function alternarEnfoque(id) {
+            fijarEnfoque(enfoque === id ? 'todos' : id);
+        }
+
+        // Con un auto enfocado, la cámara solo se mueve si el auto se sale de la zona
+        // central: se queda a la vista sin saltar en cada dato.
+        function seguirEnfocado(auto) {
+            const posicion = auto.marker.getLatLng();
+            const z = zonaLibre();
+            const p = map.latLngToContainerPoint(posicion);
+            const mx = (z.x1 - z.x0) * 0.2, my = (z.y1 - z.y0) * 0.2;
+            const dentro = p.x > z.x0 + mx && p.x < z.x1 - mx && p.y > z.y0 + my && p.y < z.y1 - my;
+            if (!dentro) map.panTo(centroParaZona(posicion, map.getZoom()));
+        }
+
+        selectorEnfoque.addEventListener('click', function(e) {
+            const boton = e.target.closest('button[data-enfoque]');
+            if (boton) fijarEnfoque(boton.dataset.enfoque);
+        });
 
         // ===== Pantalla de carga =====
         // Cubre SOLO el mapa, no toda la página: el usuario puede cambiar a
@@ -670,7 +838,8 @@
 
             auto.marker = L.marker([4.570868, -74.297333], {
                 icon: L.divIcon({ html: cfg.emoji, className: 'icono-vivo', iconSize: [30, 30], iconAnchor: [15, 15] }),
-                zIndexOffset: id === 1 ? 0 : 10
+                zIndexOffset: id === 1 ? 0 : 10,
+                title: 'Tocar para enfocar el ' + cfg.nombre
             }).addTo(map);
             auto.marker.bindTooltip(cfg.nombre, {
                 permanent: true, direction: 'bottom', offset: [0, 12], className: 'etiqueta-auto auto-' + id
@@ -682,7 +851,7 @@
             const tarjeta = document.createElement('section');
             tarjeta.className = 'auto-tarjeta auto-' + id;
             tarjeta.innerHTML = `
-                <button type="button" class="auto-titulo" title="Centrar el mapa en ${cfg.nombre}">
+                <button type="button" class="auto-titulo" title="Enfocar el mapa en ${cfg.nombre} (tocar de nuevo para ver ambos)">
                     <span class="auto-emoji">${cfg.emoji}</span><span>${cfg.nombre}</span>
                     <span class="auto-estado">En línea</span>
                 </button>
@@ -714,10 +883,11 @@
             auto.el = {};
             tarjeta.querySelectorAll('[data-campo]').forEach(function(e) { auto.el[e.dataset.campo] = e; });
             auto.estado = tarjeta.querySelector('.auto-estado');
-            tarjeta.querySelector('.auto-titulo').addEventListener('click', function() {
-                map.setView(auto.marker.getLatLng(), Math.max(map.getZoom(), 15));
-            });
+            // Tocar el emoji del auto en el mapa (o el titulo de su tarjeta) lo enfoca.
+            auto.marker.on('click', function() { alternarEnfoque(id); });
+            tarjeta.querySelector('.auto-titulo').addEventListener('click', function() { alternarEnfoque(id); });
             autos[id] = auto;
+            actualizarSelectorEnfoque();
             return auto;
         }
 
@@ -786,13 +956,20 @@
                     // Solo la primera vez hacemos zoom inicial automático
                     map.setView(newLatLng, 15);
                     esPrimeraUbicacion = false;
+                } else if (enfoque !== 'todos') {
+                    // Con un auto enfocado, solo sus datos mueven la camara.
+                    if (id === enfoque) seguirEnfocado(auto);
                 } else if (activos.length >= 2) {
                     // Con los dos vehículos transmitiendo se encuadran ambos; si
                     // ya se ven completos no se toca la cámara (evita saltos
                     // cada vez que llega un dato de uno u otro).
-                    const limites = L.latLngBounds(activos.map(a => a.marker.getLatLng()));
-                    if (eraNuevo || !map.getBounds().contains(limites)) {
-                        map.fitBounds(limites.pad(0.3), { maxZoom: 16 });
+                    const z = zonaLibre();
+                    const dentro = activos.every(function(a) {
+                        const p = map.latLngToContainerPoint(a.marker.getLatLng());
+                        return p.x > z.x0 && p.x < z.x1 && p.y > z.y0 && p.y < z.y1;
+                    });
+                    if (eraNuevo || !dentro) {
+                        encuadrar(activos.map(a => a.marker.getLatLng()));
                     }
                 } else {
                     // Solo uno transmite: se sigue suavemente manteniendo el zoom del usuario
