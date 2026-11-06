@@ -649,12 +649,74 @@
         }
 
         /* El texto se recorta con "..." si no cabe; el titulo muestra todo */
-        .ficha-viaje > span:last-child {
+        .ficha-viaje > span:last-child:not(.ficha-contenido) {
             min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
+
+        /* Ficha con el resumen del viaje (score, estilo, eventos, km). Un viaje sin
+           esos datos (el del celular) usa la ficha de siempre. */
+        .ficha-viaje.con-detalle { border-radius: 16px; }
+        .leyenda-viajes .ficha-viaje { flex: none; }      /* con 2 lineas no se deben encoger */
+        .ficha-contenido { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; gap: 1px; }
+        .ficha-titulo { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+        .ficha-detalle { display: flex; flex-wrap: wrap; align-items: center; gap: 1px 8px;
+                         font-size: 0.7rem; font-weight: 500; color: #64748b; }
+        .ficha-detalle > span { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+        .punto-estilo { display: inline-block; flex: none; width: 9px; height: 9px; border-radius: 50%; }
+        .chip-score { flex: none; padding: 2px 10px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; white-space: nowrap; }
+        .chip-score.bueno { background: #dcfce7; color: #166534; }
+        .chip-score.regular { background: #fef3c7; color: #92400e; }
+        .chip-score.riesgoso { background: #fee2e2; color: #991b1b; }
+        .chip-score.sin { background: #e2e8f0; color: #475569; font-weight: 600; }
+
+        /* Opciones de estilo y eventos: solo aparecen si la ruta trae resultados de ML */
+        .controles-ml {
+            display: none;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 4px 12px;
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.96);
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+            font-size: 0.76rem;
+            font-weight: 600;
+            color: #334155;
+        }
+        .controles-ml.visible { display: flex; }
+        .flotante-inferior .controles-ml { align-self: center; width: min(100%, 380px); }
+        .seg-ml { display: inline-flex; align-items: center; gap: 2px; }
+        .seg-ml .etq-ml { margin-right: 4px; color: #64748b; }
+        .seg-ml button {
+            min-height: 32px; padding: 2px 12px; border: none; border-radius: 999px; background: transparent;
+            font-family: inherit; font-size: inherit; font-weight: 600; color: #334155; cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .seg-ml button:hover { background: #f1f5f9; }
+        .seg-ml button.activa { background: #2563eb; color: #ffffff; }
+        .chk-ml { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; cursor: pointer; }
+        .leyenda-estilo { display: none; width: 100%; justify-content: center; flex-wrap: wrap; gap: 2px 12px; font-weight: 500; }
+        .controles-ml.modo-estilo .leyenda-estilo { display: flex; }
+        @media (max-width: 640px) {
+            .controles-ml { padding: 2px 8px; gap: 0 8px; font-size: 0.72rem; }
+            .seg-ml button { min-height: 30px; padding: 2px 10px; }
+            .chk-ml { min-height: 30px; }
+            .leyenda-estilo { gap: 0 8px; font-size: 0.68rem; }
+        }
+        .leyenda-estilo > span { display: inline-flex; align-items: center; gap: 4px; }
+
+        /* Marca en el mapa donde ocurrio un evento brusco */
+        .marca-evento-hist {
+            display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+            border: 2px solid #ffffff; background: #dc2626; color: #ffffff;
+            font-size: 12px; font-weight: 700; line-height: 1; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+        .marca-evento-hist.auto-2 { background: #9a3412; }
 
         .muestra-viaje {
             display: inline-block;
@@ -1128,7 +1190,7 @@
             .selector-autos button { padding: 4px 6px; font-size: 0.76rem; }
             .ficha-viaje { border-radius: 16px; padding: 6px 10px; gap: 6px; font-size: 0.76rem; }
             .muestra-viaje { width: 18px; }
-            .ficha-viaje > span:last-child { white-space: normal; }
+            .ficha-viaje > span:last-child:not(.ficha-contenido), .ficha-titulo { white-space: normal; }
             /* Barra de animacion mas compacta */
             .barra-animacion { padding: 10px 12px; gap: 8px 10px; }
             .btn-animacion { min-width: 0; min-height: 44px; padding: 8px 16px; }
@@ -1273,6 +1335,17 @@
             <button type="button" data-vista="2" aria-pressed="false">🚛 Auto 2</button>
         </div>
 
+        <!-- Aparece solo si la ruta trae estilo / eventos (Auto 1) -->
+        <div id="controlesML" class="controles-ml" role="group" aria-label="Estilo de manejo y eventos">
+            <div class="seg-ml" role="group" aria-label="Colorear la ruta por">
+                <span class="etq-ml">Colorear</span>
+                <button type="button" data-color="viaje" class="activa" aria-pressed="true">Viaje</button>
+                <button type="button" data-color="estilo" aria-pressed="false">Estilo</button>
+            </div>
+            <label class="chk-ml"><input type="checkbox" id="chkEventos" checked> Eventos</label>
+            <div id="leyendaEstilo" class="leyenda-estilo" aria-label="Colores de estilo"></div>
+        </div>
+
         <div id="panelViajes" class="panel-viajes">
             <button type="button" id="btnViajes" class="viajes-cabecera" aria-expanded="true"
                     aria-controls="leyendaViajes" title="Mostrar u ocultar la lista de viajes">
@@ -1385,6 +1458,31 @@
             1: { nombre: 'Auto 1', emoji: '🚚', color: '#2563eb' },
             2: { nombre: 'Auto 2', emoji: '🚛', color: '#ea580c' }
         };
+        // --- Resultados de ML (solo los vehiculos que los envian: hoy el Auto 1) ---
+        const ESTILOS_UI = {
+            cauteloso: { texto: 'Cauteloso', color: '#2E9E5B' },
+            normal:    { texto: 'Normal',    color: '#E0A800' },
+            agresivo:  { texto: 'Agresivo',  color: '#D64545' },
+            sin_dato:  { texto: 'Sin dato',  color: '#9AA0A6' }
+        };
+        const EVENTOS_UI = {
+            aceleracion_brusca:    { texto: 'Aceleración brusca',         icono: '▲' },
+            frenado_brusco:        { texto: 'Frenado brusco',             icono: '■' },
+            giro_derecha_brusco:   { texto: 'Giro brusco a la derecha',   icono: '↱' },
+            giro_izquierda_brusco: { texto: 'Giro brusco a la izquierda', icono: '↰' }
+        };
+        let modoColor = 'viaje';        // 'viaje' (como siempre) o 'estilo'
+        let mostrarEventos = true;
+        const controlesML = document.getElementById('controlesML');
+        const chkEventos = document.getElementById('chkEventos');
+        const leyendaEstilo = document.getElementById('leyendaEstilo');
+        ['cauteloso', 'normal', 'agresivo', 'sin_dato'].forEach(function(k) {
+            const s = document.createElement('span');
+            const punto = document.createElement('i'); punto.className = 'punto-estilo'; punto.style.background = ESTILOS_UI[k].color;
+            s.appendChild(punto); s.appendChild(document.createTextNode(ESTILOS_UI[k].texto));
+            leyendaEstilo.appendChild(s);
+        });
+
         // Respuesta completa de la ultima consulta por fecha ({puntos, viajes, autos, ...}) y
         // lo que se esta viendo: 'todos' (ambos a la vez), 1 o 2. Se consulta UNA vez; cambiar
         // de vehiculo solo redibuja, sin volver a pedir datos.
@@ -1518,7 +1616,58 @@
             leyendaViajes.appendChild(grupo);
         }
 
-        function agregarFicha(id, color, texto) {
+        // Resumen del viaje que calcula el servidor: score 0-100, % de cada estilo, eventos y km.
+        // Devuelve null si el viaje no trae nada de eso (viajes viejos o del celular sin distancia).
+        function resumenViaje(v) {
+            const tienePct = v.pct_cauteloso != null || v.pct_normal != null || v.pct_agresivo != null;
+            const tieneEv = v.n_aceleraciones != null || v.n_frenados != null || v.n_giros != null;
+            const tieneKm = v.distancia_km != null;
+            if (v.driving_score == null && !tienePct && !tieneEv && !tieneKm) return null;
+
+            const detalle = document.createElement('span');
+            detalle.className = 'ficha-detalle';
+            function trozo(nodos, titulo) {
+                const s = document.createElement('span');
+                if (titulo) s.title = titulo;
+                nodos.forEach(function(n) { s.appendChild(typeof n === 'string' ? document.createTextNode(n) : n); });
+                detalle.appendChild(s);
+            }
+            if (tienePct) {
+                [['cauteloso', v.pct_cauteloso], ['normal', v.pct_normal], ['agresivo', v.pct_agresivo]].forEach(function(par) {
+                    if (par[1] == null) return;
+                    const punto = document.createElement('i');
+                    punto.className = 'punto-estilo';
+                    punto.style.background = ESTILOS_UI[par[0]].color;
+                    trozo([punto, Math.round(par[1]) + '%'], ESTILOS_UI[par[0]].texto + ': ' + Math.round(par[1]) + '% del viaje');
+                });
+            }
+            if (tieneEv) {
+                trozo(['▲' + (v.n_aceleraciones || 0)], 'Aceleraciones bruscas');
+                trozo(['■' + (v.n_frenados || 0)], 'Frenados bruscos');
+                trozo(['↱↰' + (v.n_giros || 0)], 'Giros bruscos (derecha + izquierda)');
+            }
+            if (tieneKm) trozo([Number(v.distancia_km).toFixed(1) + ' km']);
+
+            let chip = null;
+            if (v.driving_score != null) {
+                const s = Number(v.driving_score);
+                const rango = s >= 80 ? ['bueno', 'Bueno'] : (s >= 60 ? ['regular', 'Regular'] : ['riesgoso', 'Riesgoso']);
+                chip = document.createElement('b');
+                chip.className = 'chip-score ' + rango[0];
+                chip.textContent = s + ' · ' + rango[1];
+                chip.title = 'Driving score: ' + s + ' de 100'
+                    + (v.score_estilo != null ? ' · estilo ' + v.score_estilo : '')
+                    + (v.score_eventos != null ? ' · eventos ' + v.score_eventos : '');
+            } else if (tienePct || tieneEv) {
+                chip = document.createElement('b');
+                chip.className = 'chip-score sin';
+                chip.textContent = 'Sin score';
+                chip.title = 'El score se calcula en viajes de 2 km o más';
+            }
+            return { detalle: detalle, chip: chip };
+        }
+
+        function agregarFicha(id, color, texto, viaje) {
             const ficha = document.createElement('button');
             ficha.type = 'button';
             ficha.className = 'ficha-viaje';
@@ -1527,10 +1676,24 @@
             const muestra = document.createElement('span');
             muestra.className = 'muestra-viaje';
             muestra.style.background = color;
-            const etiqueta = document.createElement('span');
-            etiqueta.textContent = texto;
             ficha.appendChild(muestra);
-            ficha.appendChild(etiqueta);
+            const resumen = viaje ? resumenViaje(viaje) : null;
+            if (resumen) {
+                ficha.classList.add('con-detalle');
+                const contenido = document.createElement('span');
+                contenido.className = 'ficha-contenido';
+                const titulo = document.createElement('span');
+                titulo.className = 'ficha-titulo';
+                titulo.textContent = texto;
+                contenido.appendChild(titulo);
+                contenido.appendChild(resumen.detalle);
+                ficha.appendChild(contenido);
+                if (resumen.chip) ficha.appendChild(resumen.chip);
+            } else {
+                const etiqueta = document.createElement('span');
+                etiqueta.textContent = texto;
+                ficha.appendChild(etiqueta);
+            }
             ficha.addEventListener('click', function() { seleccionarViaje(id); });
             leyendaViajes.appendChild(ficha);
             fichasViaje.set(id, ficha);
@@ -1551,14 +1714,14 @@
                     if (delAuto.length === 0) return;
                     agregarGrupoAuto(v, delAuto.length);
                     for (let r = delAuto.length - 1; r >= 0; r--) {
-                        agregarFicha(delAuto[r].id, CONFIG_AUTOS[v].color, infoViajes.get(delAuto[r].id).etiqueta);
+                        agregarFicha(delAuto[r].id, CONFIG_AUTOS[v].color, infoViajes.get(delAuto[r].id).etiqueta, delAuto[r]);
                     }
                 });
             } else {
                 const total = viajes.length;
                 for (let r = 0; r < total; r++) {
                     const v = viajes[total - 1 - r];
-                    agregarFicha(v.id, colorDeViaje(r), infoViajes.get(v.id).etiqueta);
+                    agregarFicha(v.id, colorDeViaje(r), infoViajes.get(v.id).etiqueta, v);
                 }
                 if (haySinViaje) agregarFicha(ID_SIN_VIAJE, COLOR_SIN_VIAJE, 'Sin viaje registrado');
             }
@@ -2162,9 +2325,77 @@
         }
 
         // Dibuja (o redibuja) la ruta de 'puntos' con los colores de infoViajes.
-        function pintarRuta(puntos) {
+        // Tramos de puntos consecutivos con el mismo estilo. Cada tramo nuevo repite el
+        // ultimo punto del anterior (sin huecos). Los puntos sin estilo llevan clave null.
+        function segmentarPorEstilo(puntos) {
+            const segmentos = [];
+            let actual = null;
+            puntos.forEach(function(p) {
+                const clave = ESTILOS_UI[p.estilo] ? p.estilo : null;
+                if (!actual || actual.estilo !== clave) {
+                    const nuevo = { estilo: clave, puntos: [] };
+                    if (actual) nuevo.puntos.push(actual.puntos[actual.puntos.length - 1]);
+                    segmentos.push(nuevo);
+                    actual = nuevo;
+                }
+                actual.puntos.push(p);
+            });
+            return segmentos;
+        }
+
+        // Pinta la ruta de un vehiculo coloreada por estilo de manejo. Los puntos sin
+        // estilo conservan el color del vehiculo.
+        function pintarPorEstilo(pts, cfg, estiloTrazo) {
+            segmentarPorEstilo(pts).forEach(function(seg) {
+                const color = seg.estilo ? ESTILOS_UI[seg.estilo].color : cfg.color;
+                if (seg.puntos.length > 1) {
+                    L.polyline(seg.puntos.map(p => [p.lat, p.lon]), Object.assign({ color: color }, estiloTrazo)).addTo(capaRecorrido);
+                } else {
+                    L.circleMarker([seg.puntos[0].lat, seg.puntos[0].lon], {
+                        radius: 5, color: '#ffffff', weight: 1, fillColor: color, fillOpacity: 1,
+                        interactive: false, bubblingMouseEvents: false
+                    }).addTo(capaRecorrido);
+                }
+            });
+        }
+
+        // Un icono por cada punto con evento brusco, con su tipo y hora en el popup.
+        function pintarEventos(pts, cfg, v) {
+            pts.forEach(function(p) {
+                const ev = EVENTOS_UI[p.evento];       // 'ninguno' o null: sin marca
+                if (!ev) return;
+                const rotulo = vistaAmbos ? cfg.emoji + ' ' : '';
+                L.marker([p.lat, p.lon], {
+                    icon: L.divIcon({
+                        className: '',
+                        html: '<div class="marca-evento-hist auto-' + v + '">' + ev.icono + '</div>',
+                        iconSize: [22, 22], iconAnchor: [11, 11]
+                    }),
+                    zIndexOffset: 400,
+                    title: ev.texto,
+                    bubblingMouseEvents: false
+                }).addTo(capaRecorrido).bindPopup('<b>' + rotulo + ev.icono + ' ' + ev.texto + '</b><br>' + p.hora);
+            });
+        }
+
+        // Muestra los controles de estilo / eventos solo si hay resultados de ML en la ruta.
+        function actualizarControlesML(puntos) {
+            const hay = puntos.some(p => p.estilo || p.evento);
+            controlesML.classList.toggle('visible', hay);
+            controlesML.classList.toggle('modo-estilo', hay && modoColor === 'estilo');
+            controlesML.querySelectorAll('button[data-color]').forEach(function(b) {
+                const activo = b.dataset.color === modoColor;
+                b.classList.toggle('activa', activo);
+                b.setAttribute('aria-pressed', String(activo));
+            });
+            chkEventos.checked = mostrarEventos;
+        }
+
+        // conservarVista: redibuja sin volver a encuadrar el mapa (al cambiar colores o eventos).
+        function pintarRuta(puntos, conservarVista) {
             limpiarTrazo();
             puntosActuales = puntos;
+            actualizarControlesML(puntos);
 
             // interactive: false: este trazo solo se ve. Quien recibe el mouse
             // es la polilinea invisible de crearLineaHover(), sobre toda la
@@ -2187,7 +2418,9 @@
                 const coordenadas = pts.map(p => [p.lat, p.lon]);
                 listasHover.push(coordenadas);
 
-                if (vistaAmbos || infoViajes.size === 0) {
+                if (modoColor === 'estilo' && pts.some(p => p.estilo)) {
+                    pintarPorEstilo(pts, cfg, estiloTrazo);
+                } else if (vistaAmbos || infoViajes.size === 0) {
                     // Sin viajes (o en "Ambos"): un solo color por vehiculo.
                     if (pts.length > 1) {
                         L.polyline(coordenadas, Object.assign({ color: cfg.color }, estiloTrazo))
@@ -2251,7 +2484,10 @@
                   });
             });
 
+            if (mostrarEventos) porAuto.forEach(function(pts, v) { pintarEventos(pts, CONFIG_AUTOS[v] || CONFIG_AUTOS[1], v); });
+
             crearLineaHover(listasHover);
+            if (conservarVista) { prepararAnimacion(); return; }
 
             // fitBounds encuadra toda la ruta. El maxZoom evita que, si el
             // vehículo estuvo casi quieto, el mapa se acerque tanto que se
@@ -2265,6 +2501,18 @@
             // ya esta dibujada y encuadrada.
             prepararAnimacion();
         }
+
+        // Colorear por viaje / estilo y mostrar u ocultar eventos: se redibuja lo que ya se ve.
+        controlesML.addEventListener('click', function(e) {
+            const boton = e.target.closest('button[data-color]');
+            if (!boton || boton.dataset.color === modoColor) return;
+            modoColor = boton.dataset.color;
+            pintarRuta(puntosActuales, true);
+        });
+        chkEventos.addEventListener('change', function() {
+            mostrarEventos = chkEventos.checked;
+            pintarRuta(puntosActuales, true);
+        });
 
         // ===== Vista por vehiculo =====
         // Una consulta por fecha trae los dos vehiculos. Si los dos tienen datos

@@ -495,6 +495,77 @@
             }
             .selector-enfoque button { padding: 4px 10px; font-size: 0.76rem; }
         }
+
+        /* ===== Resultados de ML (solo los vehiculos que los envian: hoy el Auto 1) ===== */
+        .oculto { display: none !important; }
+        .auto-ml {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 6px;
+            margin-bottom: 8px;
+            padding: 6px 8px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+        }
+        .ml-fila { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+        .chip-estilo {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 10px;
+            border-radius: 999px;
+            background: #e2e8f0;
+            color: #0f172a;
+            font-size: 0.8rem;
+            font-weight: 700;
+            transition: background 0.3s ease;
+        }
+        .chip-estilo::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--color-estilo, #9aa0a6); }
+        .ml-evento { font-size: 0.82rem; font-weight: 600; color: #0f172a; text-align: right; }
+        .ml-evento.reciente { color: #b91c1c; }
+        .ml-evento small { display: block; font-weight: 500; color: #64748b; font-size: 0.68rem; }
+
+        /* Aviso corto cuando llega un evento brusco */
+        .aviso-evento {
+            position: fixed;
+            top: 84px;
+            left: 50%;
+            transform: translate(-50%, -8px);
+            z-index: 1200;
+            max-width: calc(100vw - 24px);
+            padding: 8px 16px;
+            border-radius: 12px;
+            background: #7f1d1d;
+            color: #ffffff;
+            font-size: 0.88rem;
+            font-weight: 600;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease, transform 0.25s ease;
+        }
+        .aviso-evento.visible { opacity: 1; transform: translate(-50%, 0); }
+        @media (max-width: 640px) {
+            .aviso-evento { top: auto; bottom: calc(140px + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 120px); font-size: 0.8rem; }
+        }
+
+        /* Marca en el mapa donde ocurrio un evento brusco */
+        .marca-evento {
+            display: grid;
+            place-items: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid #ffffff;
+            background: #dc2626;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 700;
+            line-height: 1;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+        }
+        .marca-evento.auto-2 { background: #9a3412; }
 </style>
 </head>
 <body>
@@ -608,6 +679,9 @@
         <button type="button" data-enfoque="2" aria-pressed="false">🚛 Auto 2</button>
     </div>
 
+    <!-- Aviso breve de evento brusco (Auto 1). Se oculta solo. -->
+    <div id="avisoEvento" class="aviso-evento" role="status" aria-live="polite"></div>
+
     <script>
         // Inicializar Mapa centrado en Colombia por defecto
         const map = L.map('map', { zoomControl: false }).setView([4.570868, -74.297333], 6);
@@ -625,6 +699,22 @@
             1: { nombre: 'Auto 1', emoji: '🚚', color: '#2563eb' },
             2: { nombre: 'Auto 2', emoji: '🚛', color: '#ea580c' }
         };
+        // Resultados de ML que llegan en cada punto (solo el vehiculo que los envia; el celular
+        // manda null y su tarjeta no muestra nada de esto).
+        const ESTILOS_UI = {
+            cauteloso: { texto: 'Cauteloso', color: '#2E9E5B' },
+            normal:    { texto: 'Normal',    color: '#E0A800' },
+            agresivo:  { texto: 'Agresivo',  color: '#D64545' },
+            sin_dato:  { texto: 'Sin dato',  color: '#9AA0A6' }
+        };
+        const EVENTOS_UI = {
+            aceleracion_brusca:    { texto: 'Aceleración brusca',        icono: '▲' },
+            frenado_brusco:        { texto: 'Frenado brusco',            icono: '■' },
+            giro_derecha_brusco:   { texto: 'Giro brusco a la derecha',  icono: '↱' },
+            giro_izquierda_brusco: { texto: 'Giro brusco a la izquierda', icono: '↰' }
+        };
+        const MAX_MARCAS_EVENTO = 30;       // por auto: las mas viejas se quitan del mapa
+        const RECIENTE_MS = 60000;          // un evento se resalta en la tarjeta durante 1 min
         const SIN_SENAL_MS = 30000;   // sin datos por mas de 30 s = "sin senal"
         const autos = {};
 
@@ -865,6 +955,16 @@
                     <div><div class="dato-etiqueta">Fecha</div><div class="dato-valor" data-campo="fecha">---</div></div>
                     <div><div class="dato-etiqueta">Hora COL</div><div class="dato-valor" data-campo="hora_col">---</div></div>
                 </div>
+                <div class="auto-ml oculto" data-bloque="ml">
+                    <div class="ml-fila">
+                        <span class="dato-etiqueta">Estilo de manejo</span>
+                        <span class="chip-estilo" data-campo="estilo">---</span>
+                    </div>
+                    <div class="ml-fila">
+                        <span class="dato-etiqueta">Último evento</span>
+                        <span class="ml-evento" data-campo="evento">Ninguno aún</span>
+                    </div>
+                </div>
                 <details class="coordenadas">
                     <summary>Opciones avanzadas</summary>
                     <div class="coordenadas-cuerpo">
@@ -883,12 +983,75 @@
             auto.el = {};
             tarjeta.querySelectorAll('[data-campo]').forEach(function(e) { auto.el[e.dataset.campo] = e; });
             auto.estado = tarjeta.querySelector('.auto-estado');
+            auto.bloqueML = tarjeta.querySelector('[data-bloque="ml"]');
+            auto.marcasEvento = [];
+            auto.ultimoEvento = null;
             // Tocar el emoji del auto en el mapa (o el titulo de su tarjeta) lo enfoca.
             auto.marker.on('click', function() { alternarEnfoque(id); });
             tarjeta.querySelector('.auto-titulo').addEventListener('click', function() { alternarEnfoque(id); });
             autos[id] = auto;
             actualizarSelectorEnfoque();
             return auto;
+        }
+
+        // ===== Estilo y eventos (ML) =====
+        const avisoEvento = document.getElementById('avisoEvento');
+        let temporizadorAviso = null;
+
+        function mostrarAvisoEvento(auto, ev) {
+            avisoEvento.textContent = auto.cfg.emoji + ' ' + auto.cfg.nombre + ' · ' + ev.icono + ' ' + ev.texto;
+            avisoEvento.classList.add('visible');
+            clearTimeout(temporizadorAviso);
+            temporizadorAviso = setTimeout(function() { avisoEvento.classList.remove('visible'); }, 6000);
+        }
+
+        // Pone un circulo con el icono del evento en el lugar donde ocurrio.
+        function marcarEventoEnMapa(auto, ev, latlng, hora) {
+            const marca = L.marker(latlng, {
+                icon: L.divIcon({
+                    className: '',
+                    html: '<div class="marca-evento auto-' + auto.id + '">' + ev.icono + '</div>',
+                    iconSize: [24, 24], iconAnchor: [12, 12]
+                }),
+                zIndexOffset: -100,
+                title: ev.texto
+            }).addTo(map);
+            marca.bindPopup('<b>' + auto.cfg.emoji + ' ' + auto.cfg.nombre + '</b><br>' + ev.icono + ' ' + ev.texto + '<br>' + hora);
+            auto.marcasEvento.push(marca);
+            if (auto.marcasEvento.length > MAX_MARCAS_EVENTO) map.removeLayer(auto.marcasEvento.shift());
+        }
+
+        // Actualiza la tarjeta con el estilo / evento del punto recibido. Si el vehiculo no los
+        // envia (null), no se muestra nada: ni "sin dato" ni bloque vacio.
+        function actualizarML(auto, msg, latlng) {
+            const trae = Boolean(msg.estilo || msg.evento);
+            if (trae) auto.bloqueML.classList.remove('oculto');
+            if (!trae) return;
+
+            const est = ESTILOS_UI[msg.estilo];
+            if (est) {
+                auto.el.estilo.textContent = est.texto;
+                auto.el.estilo.style.setProperty('--color-estilo', est.color);
+            }
+            const ev = EVENTOS_UI[msg.evento];       // undefined con 'ninguno' o null
+            if (ev) {
+                auto.ultimoEvento = { ev: ev, hora: msg.hora_col, t: Date.now() };
+                mostrarAvisoEvento(auto, ev);
+                marcarEventoEnMapa(auto, ev, latlng, msg.fecha + ' ' + msg.hora_col);
+            }
+            pintarUltimoEvento(auto);
+        }
+
+        function pintarUltimoEvento(auto) {
+            const e = auto.ultimoEvento;
+            const caja = auto.el.evento;
+            if (!e) { caja.textContent = 'Ninguno aún'; caja.classList.remove('reciente'); return; }
+            caja.innerHTML = '';
+            caja.appendChild(document.createTextNode(e.ev.icono + ' ' + e.ev.texto));
+            const hora = document.createElement('small');
+            hora.textContent = e.hora;
+            caja.appendChild(hora);
+            caja.classList.toggle('reciente', Date.now() - e.t < RECIENTE_MS);
         }
 
         function enLinea(auto) {
@@ -904,6 +1067,7 @@
                 if (icono) icono.classList.toggle('sin-senal', !activo);
                 if (etiqueta) etiqueta.classList.toggle('sin-senal', !activo);
                 auto.estado.classList.toggle('sin-senal', !activo);
+                if (auto.ultimoEvento) pintarUltimoEvento(auto);
                 if (activo) {
                     auto.estado.innerText = 'En línea';
                 } else {
@@ -949,6 +1113,7 @@
                 auto.puntos.push(newLatLng);
                 auto.linea.addLatLng(newLatLng);
                 auto.el.puntos.innerText = auto.puntos.length;
+                actualizarML(auto, msg, newLatLng);
                 actualizarDireccion(auto, lat, lon);
 
                 const activos = Object.values(autos).filter(enLinea);

@@ -9,6 +9,7 @@ import urllib.parse
 import urllib.request
 import mysql.connector
 from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify
@@ -40,6 +41,27 @@ TOLERANCIA_FIN_VIAJE = timedelta(seconds=15)
 # Un paquete sin esa linea (app vieja) se asigna al vehiculo 1.
 VEHICULOS = (1, 2)
 VEHICULO_POR_DEFECTO = 1
+
+# --- Resultados de ML que puede enviar un vehiculo (hoy, el Auto 1 / ESP32) ---
+# Cada ubicacion puede traer dos lineas mas: "Estilo: ..." (modelo OBD) y
+# "Evento: ..." (modelo IMU). Un vehiculo que no las envia (el celular) las deja
+# en NULL: nada se descarta ni se rompe. La lista cerrada impide que entre texto raro.
+ESTILOS = ('cauteloso', 'normal', 'agresivo', 'sin_dato')
+EVENTOS = ('aceleracion_brusca', 'frenado_brusco', 'giro_derecha_brusco',
+           'giro_izquierda_brusco', 'ninguno')
+# Columnas que agrega la migracion SQL de ML (MIGRACION_ML_AUTO1.md)
+COLUMNAS_SCORE_VIAJE = ('driving_score', 'score_estilo', 'score_eventos',
+                        'pct_cauteloso', 'pct_normal', 'pct_agresivo',
+                        'n_aceleraciones', 'n_frenados', 'n_giros', 'distancia_km')
+
+# --- Driving score del viaje (se calcula al cerrar el viaje) ---
+# score = PESO_ESTILO * score_estilo + (1 - PESO_ESTILO) * score_eventos
+PESO_ESTILO = 0.5
+PUNTOS_POR_EVENTO_10KM = 10     # cada evento por cada 10 km resta estos puntos
+ESPERA_SCORE_S = 20             # > TOLERANCIA_FIN_VIAJE: deja llegar el ultimo punto
+# Un viaje mas corto que esto no recibe score: con pocos km un solo evento lo
+# desplomaria sin significar nada (se guardan igual la distancia y los conteos).
+SCORE_KM_MINIMOS = 2.0
 
 # --- Lugar: radio de busqueda, fijo en el codigo (el usuario no lo elige) ---
 RADIO_LUGAR_METROS = 200
@@ -93,6 +115,49 @@ def tabla_tiene_vehiculo(tabla):
     _cache_columna_vehiculo[tabla] = (tiene, ahora)
     return tiene
 
+# --- ¿Existe la columna? (migracion de ML) ---
+# Igual que con "vehiculo": una instancia sin migrar sigue funcionando y solo
+# deja de guardar / mostrar los campos nuevos. Una vez detectada se recuerda; si
+# no existe, se revisa de nuevo cada 30 s.
+_cache_columnas = {}
+_TABLAS_CON_COLUMNAS = ('ubicaciones', 'viajes')
+_COLUMNAS_CONOCIDAS = ('estilo', 'evento') + COLUMNAS_SCORE_VIAJE
+
+def tabla_tiene_columna(tabla, columna):
+    assert tabla in _TABLAS_CON_COLUMNAS and columna in _COLUMNAS_CONOCIDAS
+    ahora = time.time()
+    previo = _cache_columnas.get((tabla, columna))
+    if previo and (previo[0] or ahora - previo[1] < 30):
+        return previo[0]
+    tiene = False
+    try:
+        conexion = conectar_mysql()
+        cursor = conexion.cursor()
+        cursor.execute(f"SHOW COLUMNS FROM {tabla} LIKE %s", (columna,))
+        tiene = cursor.fetchone() is not None
+        cursor.close()
+        conexion.close()
+    except Exception as error:
+        print(f"Aviso: no se pudo revisar la columna {columna} de {tabla}: {error}")
+    _cache_columnas[(tabla, columna)] = (tiene, ahora)
+    return tiene
+
+def tiene_columnas_ml_ubicaciones():
+    return tabla_tiene_columna('ubicaciones', 'estilo') and tabla_tiene_columna('ubicaciones', 'evento')
+
+def tiene_columnas_score_viajes():
+    return all(tabla_tiene_columna('viajes', c) for c in COLUMNAS_SCORE_VIAJE)
+
+def extraer_campo(lineas, nombre, validos):
+    """Lee "Nombre: valor". Devuelve el valor si esta en la lista; si no viene
+    (celular) o no es valido, devuelve None. Nunca descarta el paquete."""
+    for linea in lineas:
+        m = re.match(rf'^\s*{nombre}\s*:\s*(\w+)\s*$', linea, re.IGNORECASE)
+        if m:
+            valor = m.group(1).lower()
+            return valor if valor in validos else None
+    return None
+
 def extraer_vehiculo(lineas):
     """Lee la linea "Vehiculo: N" de un paquete. Devuelve VEHICULO_POR_DEFECTO
     si no viene, el numero si es valido, o None si viene pero no es valido."""
@@ -109,24 +174,24 @@ def guardar_en_mysql(datos):
         return
     vehiculo = datos['vehiculo']
     try:
+        columnas = ['latitud', 'longitud', 'fecha', 'hora_col']
+        valores = [datos['latitud'], datos['longitud'], datos['fecha'], datos['hora_col']]
         if tabla_tiene_vehiculo('ubicaciones'):
-            consulta = """
-                INSERT INTO ubicaciones (latitud, longitud, fecha, hora_col, vehiculo)
-                VALUES (%s, %s, %s, %s, %s)
-            """
-            valores = (datos['latitud'], datos['longitud'], datos['fecha'], datos['hora_col'], vehiculo)
-        elif vehiculo == VEHICULO_POR_DEFECTO:
-            consulta = """
-                INSERT INTO ubicaciones (latitud, longitud, fecha, hora_col)
-                VALUES (%s, %s, %s, %s)
-            """
-            valores = (datos['latitud'], datos['longitud'], datos['fecha'], datos['hora_col'])
-        else:
+            columnas.append('vehiculo')
+            valores.append(vehiculo)
+        elif vehiculo != VEHICULO_POR_DEFECTO:
             print(f"Aviso: falta la columna vehiculo en ubicaciones; no se guarda el vehiculo {vehiculo}.")
             return
+        # Estilo y evento (ML) solo si ya existen las dos columnas. Para un
+        # vehiculo que no los envia (el celular) se guardan como NULL.
+        if tiene_columnas_ml_ubicaciones():
+            columnas += ['estilo', 'evento']
+            valores += [datos.get('estilo'), datos.get('evento')]
+        consulta = (f"INSERT INTO ubicaciones ({', '.join(columnas)}) "
+                    f"VALUES ({', '.join(['%s'] * len(columnas))})")
         conexion = conectar_mysql()
         cursor = conexion.cursor()
-        cursor.execute(consulta, valores)
+        cursor.execute(consulta, tuple(valores))
         conexion.commit()
         cursor.close()
         conexion.close()
@@ -134,13 +199,6 @@ def guardar_en_mysql(datos):
     except Exception as error:
         print(f"Error al conectar/guardar en MySQL: {error}")
 
-# --- Viajes: marcas de inicio y fin de recorrido ---
-# Se disparan cuando la app Android manda los mensajes cortos
-# "INICIO_RECORRIDO" / "FIN_RECORRIDO" (con la linea "Vehiculo: N" debajo),
-# justo cuando el usuario presiona los botones Iniciar/Finalizar. No se
-# infieren los limites del viaje revisando huecos de tiempo: el propio
-# usuario confirma cuando empieza y cuando termina. Cada vehiculo tiene sus
-# propios viajes: el FIN del vehiculo 2 nunca cierra el viaje del vehiculo 1.
 def registrar_inicio_viaje(vehiculo):
     """Crea una fila nueva en viajes al recibir INICIO_RECORRIDO. fin queda NULL."""
     try:
@@ -162,37 +220,36 @@ def registrar_inicio_viaje(vehiculo):
         print(f"Error al registrar inicio de viaje: {error}")
 
 def registrar_fin_viaje(vehiculo):
-    """Cierra el viaje abierto mas reciente (fin IS NULL) de ese vehiculo."""
+    """Cierra el viaje abierto mas reciente (fin IS NULL) de ese vehiculo y
+    programa el calculo de su driving score."""
     try:
         if tabla_tiene_vehiculo('viajes'):
-            consulta = """
-                UPDATE viajes SET fin = NOW()
-                WHERE fin IS NULL AND vehiculo = %s
-                ORDER BY inicio DESC
-                LIMIT 1
-            """
-            valores = (vehiculo,)
+            filtro, valores = "fin IS NULL AND vehiculo = %s", (vehiculo,)
         elif vehiculo == VEHICULO_POR_DEFECTO:
-            consulta = """
-                UPDATE viajes SET fin = NOW()
-                WHERE fin IS NULL
-                ORDER BY inicio DESC
-                LIMIT 1
-            """
-            valores = ()
+            filtro, valores = "fin IS NULL", ()
         else:
             return
         conexion = conectar_mysql()
         cursor = conexion.cursor()
-        cursor.execute(consulta, valores)
-        conexion.commit()
-        filas_afectadas = cursor.rowcount
+        cursor.execute(f"SELECT id FROM viajes WHERE {filtro} ORDER BY inicio DESC LIMIT 1", valores)
+        fila = cursor.fetchone()
+        viaje_id = fila[0] if fila else None
+        filas_afectadas = 0
+        if viaje_id is not None:
+            cursor.execute("UPDATE viajes SET fin = NOW() WHERE id = %s", (viaje_id,))
+            conexion.commit()
+            filas_afectadas = cursor.rowcount
         cursor.close()
         conexion.close()
         if filas_afectadas == 0:
             print(f"--> FIN_RECORRIDO del vehiculo {vehiculo} recibido, pero no habia ningun viaje abierto.")
         else:
             print(f"--> Viaje del vehiculo {vehiculo} finalizado.")
+            # Se espera ESPERA_SCORE_S porque el ultimo punto puede llegar despues
+            # de la marca de fin. El Timer no bloquea el receptor UDP.
+            temporizador = threading.Timer(ESPERA_SCORE_S, calcular_score_viaje, args=(vehiculo, viaje_id))
+            temporizador.daemon = True
+            temporizador.start()
     except Exception as error:
         print(f"Error al registrar fin de viaje: {error}")
 
@@ -254,7 +311,10 @@ def udp_listener():
                 'longitud': lon_texto,
                 'fecha': fecha,
                 'hora_col': hora_col,
-                'vehiculo': vehiculo
+                'vehiculo': vehiculo,
+                # Solo el Auto 1 (ESP32) los envia; el celular los deja en None.
+                'estilo': extraer_campo(lineas[5:], 'Estilo', ESTILOS),
+                'evento': extraer_campo(lineas[5:], 'Evento', EVENTOS)
             }
 
             socketio.emit('actualizacion_gps', datos_json)
@@ -332,6 +392,10 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
     cursor = conexion.cursor(dictionary=True)
     usa_col_ubic = tabla_tiene_vehiculo('ubicaciones')
     usa_col_viajes = tabla_tiene_vehiculo('viajes')
+    usa_ml = tiene_columnas_ml_ubicaciones()
+    usa_score = tiene_columnas_score_viajes()
+    extra_ubic = ", estilo, evento" if usa_ml else ""
+    extra_viaje = (", " + ", ".join(COLUMNAS_SCORE_VIAJE)) if usa_score else ""
 
     puntos = []
     viajes = []
@@ -345,8 +409,8 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
 
         if usa_col_ubic:
             cursor.execute(
-                """
-                SELECT latitud, longitud, fecha_registro
+                f"""
+                SELECT latitud, longitud, fecha_registro{extra_ubic}
                 FROM ubicaciones
                 WHERE vehiculo = %s AND fecha_registro BETWEEN %s AND %s
                 ORDER BY fecha_registro ASC
@@ -356,8 +420,8 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
             )
         else:
             cursor.execute(
-                """
-                SELECT latitud, longitud, fecha_registro
+                f"""
+                SELECT latitud, longitud, fecha_registro{extra_ubic}
                 FROM ubicaciones
                 WHERE fecha_registro BETWEEN %s AND %s
                 ORDER BY fecha_registro ASC
@@ -385,8 +449,8 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
         try:
             if usa_col_viajes:
                 cursor.execute(
-                    """
-                    SELECT id, inicio, fin
+                    f"""
+                    SELECT id, inicio, fin{extra_viaje}
                     FROM viajes
                     WHERE vehiculo = %s AND inicio <= %s AND (fin IS NULL OR fin >= %s)
                     ORDER BY inicio ASC
@@ -396,8 +460,8 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
                 viajes_db = cursor.fetchall()
             elif v == VEHICULO_POR_DEFECTO:
                 cursor.execute(
-                    """
-                    SELECT id, inicio, fin
+                    f"""
+                    SELECT id, inicio, fin{extra_viaje}
                     FROM viajes
                     WHERE inicio <= %s AND (fin IS NULL OR fin >= %s)
                     ORDER BY inicio ASC
@@ -422,20 +486,29 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
                 # navegador los puntos de los dos vehiculos en una sola linea de tiempo.
                 't': int(fila['fecha_registro'].replace(tzinfo=UTC).timestamp() * 1000),
                 'viaje_id': viaje_id,
-                'vehiculo': v
+                'vehiculo': v,
+                # Resultados de ML (None si la columna no existe o el vehiculo no los envia)
+                'estilo': fila.get('estilo'),
+                'evento': fila.get('evento')
             })
 
         # Solo se informan los viajes que realmente tienen puntos en la consulta.
         usados = set(ids)
         for viaje in viajes_db:
             if viaje['id'] in usados:
-                viajes.append({
+                item = {
                     'id': viaje['id'],
                     'vehiculo': v,
                     'inicio': formatear_marca(viaje['inicio']),
                     'fin': formatear_marca(viaje['fin']) if viaje['fin'] else None,
                     'sin_cierre': viaje['fin'] is None
-                })
+                }
+                # Score y desglose (None si no hay columnas o el viaje no tiene ML).
+                # DECIMAL llega como Decimal: se pasa a float para el JSON.
+                for c in COLUMNAS_SCORE_VIAJE:
+                    valor = viaje.get(c)
+                    item[c] = float(valor) if isinstance(valor, Decimal) else valor
+                viajes.append(item)
         por_vehiculo[v] = {'total': len(filas), 'truncado': truncado}
 
     cursor.close()
@@ -468,6 +541,120 @@ def distancia_metros(lat1, lon1, lat2, lon2):
     a = (math.sin(delta_lat / 2) ** 2 +
          math.cos(rad_lat1) * math.cos(rad_lat2) * math.sin(delta_lon / 2) ** 2)
     return 2 * radio_tierra * math.asin(math.sqrt(a))
+
+# --- Driving score del viaje ---
+def calcular_score_viaje(vehiculo, viaje_id):
+    """Calcula y guarda en viajes el score de un viaje ya cerrado.
+
+    Sirve para cualquier vehiculo: si el viaje no tiene resultados de ML (el
+    celular no los envia) solo se guarda la distancia y el score queda en NULL.
+
+      score_estilo  = 100 * (%cauteloso + 0.5 * %normal)          (modelo OBD)
+      score_eventos = max(0, 100 - 10 * eventos por cada 10 km)   (modelo IMU)
+      driving_score = PESO_ESTILO * score_estilo + (1 - PESO_ESTILO) * score_eventos
+    Si falta una de las dos partes, el score es la otra. Los puntos sin estilo
+    o evento (NULL, 'sin_dato') no cuentan.
+    """
+    try:
+        if not tiene_columnas_score_viajes() or not tabla_tiene_vehiculo('ubicaciones'):
+            return
+        con_ml = tiene_columnas_ml_ubicaciones()
+        conexion = conectar_mysql()
+        cursor = conexion.cursor(dictionary=True)
+        cursor.execute("SELECT id, inicio, fin FROM viajes WHERE id = %s", (viaje_id,))
+        viaje = cursor.fetchone()
+        if not viaje or not viaje['fin']:
+            cursor.close(); conexion.close()
+            return
+        extra = ", estilo, evento" if con_ml else ""
+        cursor.execute(
+            f"""
+            SELECT latitud, longitud, fecha, hora_col{extra} FROM ubicaciones
+            WHERE vehiculo = %s AND fecha_registro BETWEEN %s AND %s
+            ORDER BY fecha_registro ASC
+            """,
+            (vehiculo, viaje['inicio'], viaje['fin'] + TOLERANCIA_FIN_VIAJE)
+        )
+        # Sin duplicados: si el mismo mensaje se guardara dos veces, la hora GPS
+        # (fecha + hora_col) es identica; se deja una sola fila por instante.
+        filas, vistos = [], set()
+        for f in cursor.fetchall():
+            clave = (f['fecha'], f['hora_col'])
+            if clave not in vistos:
+                vistos.add(clave)
+                filas.append(f)
+
+        # Distancia del viaje (suma de tramos entre puntos consecutivos)
+        metros, previo = 0.0, None
+        for f in filas:
+            try:
+                punto = (float(f['latitud']), float(f['longitud']))
+            except (TypeError, ValueError):
+                continue
+            if previo:
+                metros += distancia_metros(*previo, *punto)
+            previo = punto
+        km = round(metros / 1000, 2)
+
+        estilos = [f.get('estilo') for f in filas if f.get('estilo') in ('cauteloso', 'normal', 'agresivo')]
+        hay_evento_dato = any(f.get('evento') for f in filas)
+        hay_ml = any(f.get('estilo') or f.get('evento') for f in filas)
+
+        if not hay_ml:
+            # Viaje sin ML (celular): solo la distancia.
+            cursor.execute("UPDATE viajes SET distancia_km = %s WHERE id = %s", (km, viaje_id))
+            conexion.commit()
+            cursor.close(); conexion.close()
+            print(f"--> Viaje {viaje_id} (vehiculo {vehiculo}) sin ML: {km} km, sin score.")
+            return
+
+        eventos = [f.get('evento') for f in filas if f.get('evento') and f['evento'] != 'ninguno']
+        n_acel = eventos.count('aceleracion_brusca')
+        n_fren = eventos.count('frenado_brusco')
+        n_giros = eventos.count('giro_derecha_brusco') + eventos.count('giro_izquierda_brusco')
+
+        pct = {'cauteloso': None, 'normal': None, 'agresivo': None}
+        score_estilo = None
+        if estilos:
+            n = len(estilos)
+            pct = {s: round(100 * estilos.count(s) / n, 2) for s in pct}
+            score_estilo = 100 * (estilos.count('cauteloso') + 0.5 * estilos.count('normal')) / n
+        score_eventos = None
+        if hay_evento_dato:
+            e_10km = len(eventos) * 10 / max(km, 1)
+            score_eventos = max(0.0, 100 - PUNTOS_POR_EVENTO_10KM * e_10km)
+
+        score = None
+        if km >= SCORE_KM_MINIMOS:
+            if score_estilo is not None and score_eventos is not None:
+                score = PESO_ESTILO * score_estilo + (1 - PESO_ESTILO) * score_eventos
+            elif score_estilo is not None:
+                score = score_estilo
+            else:
+                score = score_eventos
+        else:
+            score_estilo = score_eventos = None     # viaje demasiado corto
+
+        def r(x):
+            return None if x is None else int(round(x))
+
+        cursor.execute(
+            """
+            UPDATE viajes SET driving_score = %s, score_estilo = %s, score_eventos = %s,
+                pct_cauteloso = %s, pct_normal = %s, pct_agresivo = %s,
+                n_aceleraciones = %s, n_frenados = %s, n_giros = %s, distancia_km = %s
+            WHERE id = %s
+            """,
+            (r(score), r(score_estilo), r(score_eventos),
+             pct['cauteloso'], pct['normal'], pct['agresivo'],
+             n_acel, n_fren, n_giros, km, viaje_id)
+        )
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        print(f"--> Score del viaje {viaje_id} (vehiculo {vehiculo}): {r(score)} ({km} km)")
+    except Exception as error:
+        print(f"Error calculando el score del viaje: {error}")
 
 # --- Lugar: busca el viaje (tabla viajes) que contiene una visita ---
 def buscar_viaje_de_visita(cursor, entrada_utc, salida_utc, vehiculo):
