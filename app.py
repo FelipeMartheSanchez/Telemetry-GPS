@@ -63,6 +63,14 @@ ESPERA_SCORE_S = 20             # > TOLERANCIA_FIN_VIAJE: deja llegar el ultimo 
 # desplomaria sin significar nada (se guardan igual la distancia y los conteos).
 SCORE_KM_MINIMOS = 2.0
 
+# --- Cierre automatico de viajes sin datos ---
+# Si un vehiculo deja de enviar (la ESP32 sin energia/senal o la app cerrada) por
+# mas de TIMEOUT_SIN_DATOS_S, su viaje abierto se cierra solo, con la hora del
+# ultimo punto recibido, y se calcula el score. Un viaje abierto que ya quedo
+# atras (el vehiculo inicio otro viaje despues) se cierra de inmediato.
+TIMEOUT_SIN_DATOS_S = 180
+REVISION_INACTIVIDAD_S = 30
+
 # --- Lugar: radio de busqueda, fijo en el codigo (el usuario no lo elige) ---
 RADIO_LUGAR_METROS = 200
 
@@ -252,6 +260,65 @@ def registrar_fin_viaje(vehiculo):
             temporizador.start()
     except Exception as error:
         print(f"Error al registrar fin de viaje: {error}")
+
+def a_datetime(valor):
+    if isinstance(valor, str):
+        return datetime.fromisoformat(valor)
+    return valor
+
+def cerrar_viajes_inactivos():
+    """Cierra los viajes abiertos (fin IS NULL) que ya no reciben datos.
+    Devuelve la lista de (vehiculo, viaje_id) cerrados por falta de datos."""
+    cerrados = []
+    try:
+        if not tabla_tiene_vehiculo('viajes') or not tabla_tiene_vehiculo('ubicaciones'):
+            return cerrados
+        conexion = conectar_mysql()
+        cursor = conexion.cursor(dictionary=True)
+        cursor.execute("SELECT NOW() AS ahora")
+        ahora = a_datetime(cursor.fetchone()['ahora'])
+        cursor.execute("SELECT id, inicio, vehiculo FROM viajes WHERE fin IS NULL ORDER BY vehiculo, inicio")
+        abiertos = cursor.fetchall()
+        for v in abiertos:
+            inicio = a_datetime(v['inicio'])
+            cursor.execute("SELECT MIN(inicio) AS siguiente FROM viajes WHERE vehiculo = %s AND inicio > %s",
+                           (v['vehiculo'], inicio))
+            siguiente = cursor.fetchone()['siguiente']
+            if siguiente is not None:
+                siguiente = a_datetime(siguiente)
+                cursor.execute("SELECT MAX(fecha_registro) AS ultimo FROM ubicaciones "
+                               "WHERE vehiculo = %s AND fecha_registro >= %s AND fecha_registro < %s",
+                               (v['vehiculo'], inicio, siguiente))
+            else:
+                cursor.execute("SELECT MAX(fecha_registro) AS ultimo FROM ubicaciones "
+                               "WHERE vehiculo = %s AND fecha_registro >= %s", (v['vehiculo'], inicio))
+            ultimo = cursor.fetchone()['ultimo']
+            ultimo = max(inicio, a_datetime(ultimo)) if ultimo is not None else inicio
+            if siguiente is None and (ahora - ultimo).total_seconds() < TIMEOUT_SIN_DATOS_S:
+                continue                       # sigue activo
+            cursor.execute("UPDATE viajes SET fin = %s WHERE id = %s AND fin IS NULL", (ultimo, v['id']))
+            conexion.commit()
+            if cursor.rowcount:
+                print(f"--> Viaje {v['id']} del vehiculo {v['vehiculo']} cerrado por falta de datos "
+                      f"(ultimo punto: {ultimo}).")
+                cerrados.append((v['vehiculo'], v['id'], siguiente is None))
+        cursor.close()
+        conexion.close()
+    except Exception as error:
+        print(f"Error al revisar viajes inactivos: {error}")
+        return []
+    resultado = []
+    for vehiculo, viaje_id, activo_hasta_ahora in cerrados:
+        if activo_hasta_ahora:
+            socketio.emit('viaje_finalizado', {'vehiculo': vehiculo, 'motivo': 'sin_datos'})
+        calcular_score_viaje(vehiculo, viaje_id)
+        resultado.append((vehiculo, viaje_id))
+    return resultado
+
+def vigilar_inactividad():
+    while True:
+        cerrar_viajes_inactivos()
+        time.sleep(REVISION_INACTIVIDAD_S)
 
 def coordenadas_validas(lat_texto, lon_texto):
     """True si son numeros reales dentro de rango y no el (0, 0) de un GPS sin senal.
@@ -951,5 +1018,6 @@ def api_direccion():
 if __name__ == '__main__':
     print(f"Página: {NOMBRE_PAGINA}")
     socketio.start_background_task(udp_listener)
+    socketio.start_background_task(vigilar_inactividad)
     print(f"Iniciando servidor Web en el puerto {WEB_PORT}...")
     socketio.run(app, host='0.0.0.0', port=WEB_PORT, allow_unsafe_werkzeug=True)
