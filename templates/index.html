@@ -1068,7 +1068,9 @@
                 if (etiqueta) etiqueta.classList.toggle('sin-senal', !activo);
                 auto.estado.classList.toggle('sin-senal', !activo);
                 if (auto.ultimoEvento) pintarUltimoEvento(auto);
-                if (activo) {
+                if (auto.finalizado && !activo) {
+                    auto.estado.innerText = 'Viaje finalizado';
+                } else if (activo) {
                     auto.estado.innerText = 'En línea';
                 } else {
                     const s = Math.round((Date.now() - auto.ultimoMensaje) / 1000);
@@ -1076,6 +1078,15 @@
                 }
             });
         }, 5000);
+
+        // El servidor cerro el viaje porque el vehiculo dejo de enviar datos.
+        socket.on('viaje_finalizado', function(msg) {
+            const auto = autos[CONFIG_AUTOS[msg.vehiculo] ? Number(msg.vehiculo) : 1];
+            if (!auto) return;
+            auto.finalizado = true;
+            auto.estado.classList.add('sin-senal');
+            auto.estado.innerText = 'Viaje finalizado';
+        });
 
         socket.on('actualizacion_gps', function(msg) {
             // Apenas llega un dato real, se oculta la pantalla de carga
@@ -1102,6 +1113,7 @@
             if (!isNaN(lat) && !isNaN(lon)) {
                 const newLatLng = new L.LatLng(lat, lon);
                 auto.ultimoMensaje = Date.now();
+                auto.finalizado = false;
                 auto.estado.classList.remove('sin-senal');
                 auto.estado.innerText = 'En línea';
 
