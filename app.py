@@ -57,7 +57,14 @@ COLUMNAS_SCORE_VIAJE = ('driving_score', 'score_estilo', 'score_eventos',
 # --- Driving score del viaje (se calcula al cerrar el viaje) ---
 # score = PESO_ESTILO * score_estilo + (1 - PESO_ESTILO) * score_eventos
 PESO_ESTILO = 0.5
-PUNTOS_POR_EVENTO_10KM = 10     # cada evento por cada 10 km resta estos puntos
+# Parte de eventos: caida exponencial con "semivida". E = eventos ponderados por
+# cada 10 km; cada SEMIVIDA_E_10KM eventos por 10 km (1 por km) el score de eventos
+# se reduce a la mitad: 100 * 0.5 ** (E / SEMIVIDA_E_10KM). Nunca llega a 0 de golpe,
+# asi un viaje con muchos eventos sigue distinguiendose de uno con muchisimos.
+# Los giros pesan PESO_GIRO: en ciudad son frecuentes y menos peligrosos que un
+# frenazo o una aceleracion brusca.
+SEMIVIDA_E_10KM = 10
+PESO_GIRO = 0.5
 ESPERA_SCORE_S = 20             # > TOLERANCIA_FIN_VIAJE: deja llegar el ultimo punto
 # Un viaje mas corto que esto no recibe score: con pocos km un solo evento lo
 # desplomaria sin significar nada (se guardan igual la distancia y los conteos).
@@ -617,7 +624,7 @@ def calcular_score_viaje(vehiculo, viaje_id):
     celular no los envia) solo se guarda la distancia y el score queda en NULL.
 
       score_estilo  = 100 * (%cauteloso + 0.5 * %normal)          (modelo OBD)
-      score_eventos = max(0, 100 - 10 * eventos por cada 10 km)   (modelo IMU)
+      score_eventos = 100 * 0.5 ** (E / 10), E = (acel + frenos + 0.5 * giros) * 10 / max(km, 1)   (modelo IMU)
       driving_score = PESO_ESTILO * score_estilo + (1 - PESO_ESTILO) * score_eventos
     Si falta una de las dos partes, el score es la otra. Los puntos sin estilo
     o evento (NULL, 'sin_dato') no cuentan.
@@ -688,8 +695,9 @@ def calcular_score_viaje(vehiculo, viaje_id):
             score_estilo = 100 * (estilos.count('cauteloso') + 0.5 * estilos.count('normal')) / n
         score_eventos = None
         if hay_evento_dato:
-            e_10km = len(eventos) * 10 / max(km, 1)
-            score_eventos = max(0.0, 100 - PUNTOS_POR_EVENTO_10KM * e_10km)
+            eventos_pond = n_acel + n_fren + PESO_GIRO * n_giros
+            e_10km = eventos_pond * 10 / max(km, 1)
+            score_eventos = 100 * 0.5 ** (e_10km / SEMIVIDA_E_10KM)
 
         score = None
         if km >= SCORE_KM_MINIMOS:
