@@ -527,6 +527,71 @@
 
         .panel-viajes.colapsado .viajes-flecha { transform: rotate(180deg); }
         .panel-viajes.colapsado .leyenda-viajes { display: none; }
+        .panel-viajes.colapsado .viajes-cuerpo { display: none; }
+
+        /* Cuerpo del panel: a la izquierda el selector de grupos de 10 viajes
+           (solo si hay mas de un grupo) y a la derecha la lista de viajes. */
+        .viajes-cuerpo {
+            display: flex;
+            flex: 1 1 auto;
+            min-height: 0;
+        }
+        .viajes-lista {
+            display: flex;
+            flex-direction: column;
+            flex: 1 1 auto;
+            min-width: 0;
+            min-height: 0;
+        }
+        .grupos-viajes {
+            flex: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            min-height: 0;
+            padding: 0 0 12px 10px;
+        }
+        .grupos-viajes.oculto { display: none; }
+        .grupos-viajes.cargando { opacity: 0.55; pointer-events: none; }
+        .grupos-etiqueta {
+            font-size: 0.58rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #64748b;
+        }
+        .grupos-lista {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-height: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-width: none;
+        }
+        .grupos-lista::-webkit-scrollbar { display: none; }
+        .grupo-btn, .grupo-flecha {
+            flex: none;
+            display: grid;
+            place-items: center;
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            border: 1px solid #e2e8f0;
+            border-radius: 50%;
+            background: #ffffff;
+            font-family: inherit;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: #1e293b;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .grupo-btn:hover, .grupo-flecha:hover:not(:disabled) { background: #f1f5f9; }
+        .grupo-btn.activo { background: #2563eb; border-color: #2563eb; color: #ffffff; }
+        .grupo-flecha { color: #475569; font-size: 0.7rem; }
+        .grupo-flecha:disabled { opacity: 0.35; cursor: default; }
 
         .leyenda-viajes {
             display: flex;
@@ -1169,6 +1234,11 @@
            viajes y la barra de animacion (si no, quedan encima del panel). */
         @media (max-width: 899px) {
             body.panel-abierto .flotante-inferior { display: none; }
+            /* Grupos de viajes: una fila encima de la lista */
+            .viajes-cuerpo { flex-direction: column; }
+            .grupos-viajes { flex-direction: row; padding: 0 12px 6px; }
+            .grupos-lista { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+            .grupo-flecha { transform: rotate(-90deg); }
         }
         .flotante-inferior .barra-animacion { max-width: none; margin-top: 0; }
 
@@ -1242,6 +1312,8 @@
                 max-height: calc(100dvh - 170px);
             }
             .panel-viajes .leyenda-viajes { max-height: none; flex: 1 1 auto; }
+            /* Con el selector de grupos a la izquierda, el panel gana su ancho */
+            .panel-viajes:has(.grupos-viajes:not(.oculto)) { width: 340px; }
         }
     </style>
 </head>
@@ -1366,11 +1438,22 @@
                 <span id="scoreCabecera" class="score-cabecera"></span>
                 <span class="viajes-flecha" aria-hidden="true">▾</span>
             </button>
-            <button type="button" id="fichaTodos" class="ficha-viaje ficha-todos activa" aria-pressed="true">
-                <span class="muestra-viaje"></span>
-                <span>Todos los viajes</span>
-            </button>
-            <div id="leyendaViajes" class="leyenda-viajes" role="group" aria-label="Viajes de la ruta"></div>
+            <div class="viajes-cuerpo">
+                <!-- Grupos de 10 viajes (1 = los mas recientes); solo si hay mas de uno -->
+                <nav id="gruposViajes" class="grupos-viajes oculto" aria-label="Grupos de 10 viajes">
+                    <span class="grupos-etiqueta">Grupo</span>
+                    <button type="button" class="grupo-flecha" data-paso="-1" title="10 viajes más recientes" aria-label="Grupo más reciente">▲</button>
+                    <div id="gruposLista" class="grupos-lista"></div>
+                    <button type="button" class="grupo-flecha" data-paso="1" title="10 viajes anteriores" aria-label="Grupo anterior">▼</button>
+                </nav>
+                <div class="viajes-lista">
+                    <button type="button" id="fichaTodos" class="ficha-viaje ficha-todos activa" aria-pressed="true">
+                        <span class="muestra-viaje"></span>
+                        <span>Todos los viajes</span>
+                    </button>
+                    <div id="leyendaViajes" class="leyenda-viajes" role="group" aria-label="Viajes de la ruta"></div>
+                </div>
+            </div>
         </div>
 
         <div id="barraAnimacion" class="barra-animacion">
@@ -1452,20 +1535,19 @@
 
         // ===== Segmentacion de la ruta por viaje (modo "Por fecha") =====
         // Cada viaje de la tabla viajes se dibuja con un color propio. Los
-        // colores van en orden fijo (el viaje MAS RECIENTE siempre azul, el
-        // anterior siempre naranja...) y NO se reciclan: los viajes mas
-        // antiguos que los 8 mas recientes comparten un solo color ("Otros
-        // viajes"), porque repetir uno de los 8 haria creer que son el mismo
-        // viaje. El numero del viaje no cambia (el 1 es el primero en el
-        // tiempo). Paleta validada para
-        // daltonismo y contraste (dataviz/validate_palette.js).
+        // colores van en orden fijo (el viaje MAS RECIENTE del grupo siempre
+        // azul, el anterior siempre naranja...). Cada consulta trae un grupo de
+        // como maximo 10 viajes, asi que cada uno tiene su color; el gris de
+        // "Otros viajes" queda solo por si acaso. El numero del viaje no cambia
+        // (el 1 es el primero en el tiempo de todo el rango).
         const PALETA_VIAJES = [
             '#2563eb', '#ea580c', '#0d9488', '#9333ea',
-            '#a16207', '#db2777', '#4d7c0f', '#0891b2'
+            '#a16207', '#db2777', '#4d7c0f', '#0891b2',
+            '#b91c1c', '#57534e'
         ];
         const COLOR_RUTA_UNICA = '#2563eb';    // ruta sin viajes (Por lugar, o sin marcas)
         const COLOR_SIN_VIAJE = '#94a3b8';     // puntos fuera de todo viaje
-        const COLOR_OTROS_VIAJES = '#334155';  // viajes mas antiguos que los 8 recientes
+        const COLOR_OTROS_VIAJES = '#334155';  // viajes mas alla de los 10 colores
 
         // --- Vehiculos (cada celular manda "Vehiculo: 1" o "2") ---
         const CONFIG_AUTOS = {
@@ -1745,9 +1827,93 @@
             }
             fichaTodos.style.display = vistaAmbos ? 'none' : '';
             actualizarFichasActivas();
+            pintarGrupos();
             panelViajes.style.display = 'flex';
             // PC: abierto. Celular: plegado, para no tapar el mapa.
             colapsarViajes(esPantallaAngosta());
+        }
+
+        // ===== Grupos de 10 viajes =====
+        // La consulta por fecha trae un grupo a la vez (1 = los 10 viajes mas
+        // recientes). Los botones de la izquierda del panel cambian de grupo.
+        const gruposViajes = document.getElementById('gruposViajes');
+        const gruposLista = document.getElementById('gruposLista');
+        let ultimaBusqueda = null;     // { desde, hasta } de la ultima consulta por fecha
+
+        function urlHistorial(busqueda, grupo) {
+            return `/api/historial?desde=${busqueda.desde}` +
+                (busqueda.hasta ? `&hasta=${busqueda.hasta}` : '') + `&grupo=${grupo}`;
+        }
+
+        function textoGrupo(g) {
+            const ini = partesFecha(g.desde), fin = partesFecha(g.hasta);
+            return `Grupo ${g.numero} · ${g.viajes} ${g.viajes === 1 ? 'viaje' : 'viajes'} · ` +
+                `${ini.dia} ${ini.hora} → ${fin.dia} ${fin.hora}`;
+        }
+
+        function pintarGrupos() {
+            const grupos = (datosConsulta && datosConsulta.grupos) || [];
+            gruposViajes.classList.toggle('oculto', grupos.length < 2);
+            gruposLista.replaceChildren();
+            if (grupos.length < 2) return;
+            const actual = datosConsulta.grupo || 1;
+            grupos.forEach(function(g) {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'grupo-btn' + (g.numero === actual ? ' activo' : '');
+                b.textContent = g.numero;
+                b.title = textoGrupo(g);
+                b.setAttribute('aria-label', textoGrupo(g));
+                b.setAttribute('aria-pressed', String(g.numero === actual));
+                b.addEventListener('click', function() { cambiarGrupo(g.numero); });
+                gruposLista.appendChild(b);
+            });
+            gruposViajes.querySelector('[data-paso="-1"]').disabled = actual <= 1;
+            gruposViajes.querySelector('[data-paso="1"]').disabled = actual >= grupos.length;
+            const activo = gruposLista.querySelector('.activo');
+            if (activo) activo.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
+
+        gruposViajes.querySelectorAll('.grupo-flecha').forEach(function(b) {
+            b.addEventListener('click', function() {
+                if (datosConsulta) cambiarGrupo((datosConsulta.grupo || 1) + Number(b.dataset.paso));
+            });
+        });
+
+        async function cambiarGrupo(n) {
+            if (!ultimaBusqueda || !datosConsulta || !datosConsulta.grupos) return;
+            if (n < 1 || n > datosConsulta.grupos.length || n === datosConsulta.grupo) return;
+            const vistaPrevia = vistaVehiculo;
+            const busqueda = ultimaBusqueda;
+            gruposViajes.classList.add('cargando');
+            try {
+                const respuesta = await fetch(urlHistorial(busqueda, n));
+                const datos = await respuesta.json();
+                if (busqueda !== ultimaBusqueda) return;      // hubo otra consulta mientras tanto
+                if (!respuesta.ok) {
+                    mostrarMensaje(datos.error || 'Error en la consulta.', 'error');
+                    return;
+                }
+                if (datos.total === 0) {
+                    mostrarMensaje('Ese grupo no tiene envíos.', 'info');
+                    return;
+                }
+                ocultarMensaje();
+                dibujarConsulta(datos);
+                // Se conserva el vehiculo que se estaba viendo, si tiene datos en el grupo.
+                if (vistaPrevia !== 'todos' && datos.autos.length === 2 && datos.autos.includes(vistaPrevia)) {
+                    vistaVehiculo = vistaPrevia;
+                    actualizarSelectorAutos();
+                    aplicarVista();
+                }
+                fijarResumenPanel(null, '');
+                colapsarViajes(false);     // quien cambio de grupo esta mirando la lista
+            } catch (error) {
+                console.error(error);
+                mostrarMensaje('No se pudo conectar con el servidor.', 'error');
+            } finally {
+                gruposViajes.classList.remove('cargando');
+            }
         }
 
         function ocultarLeyendaViajes() {
@@ -2322,7 +2488,8 @@
             viajeSeleccionado = null;
 
             if (viajes.length > 0) {
-                // La numeracion ("Viaje 3") es por vehiculo, en orden cronologico.
+                // La numeracion ("Viaje 3") es por vehiculo, en orden cronologico en
+                // todo el rango: la manda el servidor (v.numero); si no, se cuenta aqui.
                 const porAuto = {};
                 viajes.forEach(function(v) {
                     const a = v.vehiculo || 1;
@@ -2331,13 +2498,14 @@
                 Object.keys(porAuto).forEach(function(a) {
                     const lista = porAuto[a];
                     lista.forEach(function(v, i) {
+                        const numero = v.numero || (i + 1);
                         infoViajes.set(v.id, {
-                            numero: i + 1,
+                            numero: numero,
                             // En "Ambos" cada vehiculo va de su color; solo un vehiculo
                             // se pinta con los 8 colores de viaje.
                             color: vistaAmbos ? (CONFIG_AUTOS[a] || CONFIG_AUTOS[1]).color
                                               : colorDeViaje(lista.length - 1 - i),
-                            etiqueta: etiquetaViaje(i + 1, v)
+                            etiqueta: etiquetaViaje(numero, v)
                         });
                     });
                 });
@@ -2567,6 +2735,7 @@
         // Olvida la consulta por fecha (se usa al limpiar o al pasar a otra ruta).
         function olvidarConsulta() {
             datosConsulta = null;
+            ultimaBusqueda = null;
             vistaAmbos = false;
             actualizarSelectorAutos();
         }
@@ -2631,18 +2800,6 @@
             vistaVehiculo = datos.autos.length === 2 ? 'todos' : datos.autos[0];
             actualizarSelectorAutos();
             aplicarVista();
-        }
-
-        // Texto del aviso de recorte para el resumen del panel ('' si no hubo).
-        function avisoRecorte(datos) {
-            if (!datos.truncado) return '';
-            const pv = datos.por_vehiculo || {};
-            const cortados = [1, 2].filter(v => pv[v] && pv[v].truncado);
-            if (cortados.length === 0) return `⚠ Recortado a ${datos.total} envíos`;
-            if (datos.autos.length === 2) {
-                return '⚠ Recortado: ' + cortados.map(v => `${CONFIG_AUTOS[v].emoji} ${pv[v].total} envíos`).join(' · ');
-            }
-            return `⚠ Recortado a ${pv[cortados[0]].total} envíos`;
         }
 
         // Resalta, encima de la ruta ya dibujada, los puntos que quedaron
@@ -2734,9 +2891,13 @@
             boton.innerText = 'Consultando...';
             ocultarMensaje();
 
+            const busqueda = { desde: desdeIso, hasta: hastaIso };
+            ultimaBusqueda = busqueda;
+
             try {
-                const url = `/api/historial?desde=${desdeIso}` + (hastaIso ? `&hasta=${hastaIso}` : '');
-                const respuesta = await fetch(url);
+                // Sin tope de envios: llega el grupo 1 (los 10 viajes mas recientes)
+                // y el panel de viajes permite pasar a los anteriores.
+                const respuesta = await fetch(urlHistorial(busqueda, 1));
                 const datos = await respuesta.json();
 
                 if (!respuesta.ok) {
@@ -2754,18 +2915,9 @@
                     return;
                 }
 
+                ultimaBusqueda = busqueda;     // dibujarConsulta no la borra, pero se deja explicito
                 dibujarConsulta(datos);
-
-                if (datos.truncado) {
-                    // El aviso queda en el panel (y en el resumen) para quien
-                    // lo abra; el mapa se muestra igual.
-                    mostrarMensaje(
-                        'El rango tiene demasiados envíos y se recortó. ' +
-                        'Reduce la ventana de tiempo para ver el recorrido completo.',
-                        'info'
-                    );
-                }
-                fijarResumenPanel(null, avisoRecorte(datos));
+                fijarResumenPanel(null, '');
                 // Ruta dibujada: el panel se pliega para dejar ver el mapa
                 // (los campos conservan lo que el usuario eligio).
                 colapsarPanel(true);

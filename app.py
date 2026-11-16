@@ -28,11 +28,13 @@ DB_NAME = os.getenv('DB_NAME')
 UDP_PORT = int(os.getenv('UDP_PORT', '5000'))
 WEB_PORT = int(os.getenv('WEB_PORT', '80'))
 
-# --- Historico: zonas horarias y tope de puntos por consulta ---
+# --- Historico: zonas horarias y grupos de viajes por consulta ---
 # MySQL guarda en UTC; el usuario piensa en hora de Colombia (UTC-5).
 BOGOTA = ZoneInfo('America/Bogota')
 UTC = ZoneInfo('UTC')
-LIMITE_PUNTOS = 5000
+# Sin tope de puntos: el rango se divide en grupos de VIAJES_POR_GRUPO viajes
+# (el 1 es el mas reciente) y cada consulta trae solo los envios de un grupo.
+VIAJES_POR_GRUPO = 10
 # Margen despues de FIN_RECORRIDO para aceptar el ultimo punto del viaje
 # (el telefono puede enviar un punto justo despues de la marca de fin).
 TOLERANCIA_FIN_VIAJE = timedelta(seconds=15)
@@ -568,15 +570,81 @@ def formatear_marca(marca_utc):
     marca = marca_utc.replace(tzinfo=UTC).astimezone(BOGOTA)
     return marca.strftime('%d/%m/%Y %I:%M:%S %p')
 
-# --- Historico: consulta de la ventana de tiempo ---
-def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
-    """Devuelve (puntos, viajes, por_vehiculo) entre dos instantes.
+# --- Historico: grupos de viajes ---
+def _a_datetime(valor):
+    """Texto UTC 'YYYY-MM-DD HH:MM:SS' (o datetime) -> datetime sin zona."""
+    return valor if isinstance(valor, datetime) else datetime.strptime(valor, '%Y-%m-%d %H:%M:%S')
 
-    Cada vehiculo se consulta por separado, con su propio tope de
-    LIMITE_PUNTOS, para que uno con muchos datos no deje sin ruta al otro.
-    Los puntos de cada vehiculo van en orden cronologico y llevan 'vehiculo'
-    y 'viaje_id' (None si no cae dentro de ningun viaje). Los viajes tambien
-    llevan 'vehiculo'. por_vehiculo = {1: {'total', 'truncado'}, ...}.
+def calcular_grupos(cursor, desde_utc, hasta_utc, vehiculos, usa_col_ubic, usa_col_viajes):
+    """Divide el rango en grupos de VIAJES_POR_GRUPO viajes, del mas reciente al mas antiguo.
+
+    Devuelve (grupos, numeros):
+      grupos:  lista de {'desde', 'hasta', 'incluye_hasta', 'viajes'} (datetimes UTC).
+               grupos[0] es el mas reciente. Las ventanas son contiguas y no se
+               solapan: cada envio del rango cae en un solo grupo, tambien los que
+               estan fuera de todo viaje.
+      numeros: id de viaje -> numero del viaje (por vehiculo, en orden cronologico
+               en TODO el rango), para que "Viaje 16" sea el mismo en cualquier grupo.
+    Los viajes de los dos vehiculos se ordenan juntos por hora de inicio. Solo
+    cuentan los viajes con al menos un envio. Sin viajes (o sin la columna
+    vehiculo) hay un solo grupo con todo el rango.
+    """
+    desde = _a_datetime(desde_utc)
+    hasta = _a_datetime(hasta_utc)
+    filas = []
+    if usa_col_ubic and usa_col_viajes:
+        try:
+            marcas = ', '.join(['%s'] * len(vehiculos))
+            cursor.execute(
+                f"""
+                SELECT v.id, v.vehiculo, v.inicio FROM viajes v
+                WHERE v.vehiculo IN ({marcas}) AND v.inicio <= %s AND (v.fin IS NULL OR v.fin >= %s)
+                  AND EXISTS (
+                      SELECT 1 FROM ubicaciones u
+                      WHERE u.vehiculo = v.vehiculo
+                        AND u.fecha_registro >= GREATEST(v.inicio, %s)
+                        AND u.fecha_registro <= LEAST(COALESCE(DATE_ADD(v.fin, INTERVAL %s SECOND), %s), %s))
+                ORDER BY v.inicio DESC, v.id DESC
+                """,
+                (*vehiculos, hasta, desde, desde,
+                 int(TOLERANCIA_FIN_VIAJE.total_seconds()), hasta, hasta)
+            )
+            filas = cursor.fetchall()
+        except Exception as error:
+            print(f"Aviso: no se pudieron agrupar los viajes: {error}")
+            filas = []
+
+    numeros, conteo = {}, {}
+    for f in reversed(filas):                      # del mas antiguo al mas reciente
+        conteo[f['vehiculo']] = conteo.get(f['vehiculo'], 0) + 1
+        numeros[f['id']] = conteo[f['vehiculo']]
+
+    if not filas:
+        return [{'desde': desde, 'hasta': hasta, 'incluye_hasta': True, 'viajes': 0}], numeros
+
+    grupos = []
+    for k in range(0, len(filas), VIAJES_POR_GRUPO):
+        bloque = filas[k:k + VIAJES_POR_GRUPO]
+        # El grupo empieza con su viaje mas antiguo (sin salirse del rango).
+        grupos.append({'viajes': len(bloque), 'desde': max(bloque[-1]['inicio'], desde)})
+    for i, g in enumerate(grupos):
+        # Termina donde empieza el grupo mas reciente; el grupo 1 llega hasta "hasta".
+        g['hasta'] = hasta if i == 0 else grupos[i - 1]['desde']
+        g['incluye_hasta'] = (i == 0)
+    grupos[-1]['desde'] = desde                    # el mas antiguo cubre desde el inicio del rango
+    return grupos, numeros
+
+# --- Historico: consulta de la ventana de tiempo ---
+def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS, grupo=1):
+    """Devuelve (puntos, viajes, por_vehiculo, grupos) de UN grupo de viajes del rango.
+
+    Sin tope de puntos: el rango se divide en grupos de VIAJES_POR_GRUPO viajes
+    (calcular_grupos) y se traen todos los envios de la ventana del grupo pedido
+    (1 = el mas reciente). grupos es la lista de todos los grupos, para el selector.
+    Cada vehiculo se consulta por separado. Los puntos van en orden cronologico y
+    llevan 'vehiculo' y 'viaje_id' (None si no cae dentro de ningun viaje). Los
+    viajes llevan 'vehiculo' y 'numero'. por_vehiculo = {1: {'total', 'truncado'}, ...}
+    (truncado siempre es False: se conserva por compatibilidad).
 
     Se filtra por fecha_registro (timestamp) y no por fecha/hora_col, porque
     esas dos son varchar y no se pueden comparar ni ordenar correctamente.
@@ -594,6 +662,14 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
     viajes = []
     por_vehiculo = {}
 
+    grupos, numeros = calcular_grupos(cursor, desde_utc, hasta_utc, vehiculos, usa_col_ubic, usa_col_viajes)
+    grupo = min(max(grupo, 1), len(grupos))
+    ventana = grupos[grupo - 1]
+    desde_g, hasta_g = ventana['desde'], ventana['hasta']
+    # El limite superior es exclusivo salvo en el grupo 1: asi un envio justo en
+    # el borde no aparece en dos grupos.
+    op_hasta = '<=' if ventana['incluye_hasta'] else '<'
+
     for v in vehiculos:
         # Sin la columna (instancia sin migrar) solo existe el vehiculo 1.
         if not usa_col_ubic and v != VEHICULO_POR_DEFECTO:
@@ -605,25 +681,23 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
                 f"""
                 SELECT latitud, longitud, fecha_registro{extra_ubic}
                 FROM ubicaciones
-                WHERE vehiculo = %s AND fecha_registro BETWEEN %s AND %s
+                WHERE vehiculo = %s AND fecha_registro >= %s AND fecha_registro {op_hasta} %s
                 ORDER BY fecha_registro ASC
-                LIMIT %s
                 """,
-                (v, desde_utc, hasta_utc, LIMITE_PUNTOS)
+                (v, desde_g, hasta_g)
             )
         else:
             cursor.execute(
                 f"""
                 SELECT latitud, longitud, fecha_registro{extra_ubic}
                 FROM ubicaciones
-                WHERE fecha_registro BETWEEN %s AND %s
+                WHERE fecha_registro >= %s AND fecha_registro {op_hasta} %s
                 ORDER BY fecha_registro ASC
-                LIMIT %s
                 """,
-                (desde_utc, hasta_utc, LIMITE_PUNTOS)
+                (desde_g, hasta_g)
             )
         filas_crudas = cursor.fetchall()
-        truncado = len(filas_crudas) >= LIMITE_PUNTOS
+        truncado = False      # sin tope: se traen todos los envios del grupo
 
         # Se descartan filas cuyo texto no es una coordenada (basura que haya
         # entrado a la tabla): antes una sola fila asi rompia toda la consulta.
@@ -648,7 +722,7 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
                     WHERE vehiculo = %s AND inicio <= %s AND (fin IS NULL OR fin >= %s)
                     ORDER BY inicio ASC
                     """,
-                    (v, hasta_utc, desde_utc)
+                    (v, hasta_g, desde_g)
                 )
                 viajes_db = cursor.fetchall()
             elif v == VEHICULO_POR_DEFECTO:
@@ -659,7 +733,7 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
                     WHERE inicio <= %s AND (fin IS NULL OR fin >= %s)
                     ORDER BY inicio ASC
                     """,
-                    (hasta_utc, desde_utc)
+                    (hasta_g, desde_g)
                 )
                 viajes_db = cursor.fetchall()
         except Exception as error:
@@ -695,7 +769,9 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
                     'vehiculo': v,
                     'inicio': formatear_marca(viaje['inicio']),
                     'fin': formatear_marca(viaje['fin']) if viaje['fin'] else None,
-                    'sin_cierre': viaje['fin'] is None
+                    'sin_cierre': viaje['fin'] is None,
+                    # Numero en todo el rango (None sin agrupar: la pagina numera sola)
+                    'numero': numeros.get(viaje['id'])
                 }
                 # Score y desglose (None si no hay columnas o el viaje no tiene ML).
                 # DECIMAL llega como Decimal: se pasa a float para el JSON.
@@ -707,7 +783,13 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
 
     cursor.close()
     conexion.close()
-    return puntos, viajes, por_vehiculo
+    info_grupos = [{
+        'numero': i + 1,
+        'viajes': g['viajes'],
+        'desde': formatear_marca(g['desde']),
+        'hasta': formatear_marca(g['hasta'])
+    } for i, g in enumerate(grupos)]
+    return puntos, viajes, por_vehiculo, {'grupo': grupo, 'grupos': info_grupos}
 
 def leer_vehiculos(texto):
     """'todos' (o vacio) -> (1, 2); '1' o '2' -> ese vehiculo; otro -> None."""
@@ -1013,8 +1095,14 @@ def api_historial():
     if vehiculos is None:
         return jsonify({'error': 'El parametro vehiculo debe ser todos, 1 o 2'}), 400
 
+    # grupo=1 (por defecto) son los 10 viajes mas recientes del rango, 2 los 10 anteriores...
+    texto_grupo = request.args.get('grupo', '1')
+    if not texto_grupo.isdigit() or int(texto_grupo) < 1:
+        return jsonify({'error': 'El parametro grupo debe ser un numero desde 1'}), 400
+
     try:
-        puntos, viajes, por_vehiculo = consultar_historial(desde_utc, hasta_utc, vehiculos)
+        puntos, viajes, por_vehiculo, info_grupos = consultar_historial(
+            desde_utc, hasta_utc, vehiculos, int(texto_grupo))
     except Exception as error:
         print(f"Error consultando el historial: {error}")
         return jsonify({'error': 'No se pudo consultar la base de datos'}), 500
@@ -1024,7 +1112,9 @@ def api_historial():
         'viajes': viajes,
         'total': len(puntos),
         'truncado': any(info['truncado'] for info in por_vehiculo.values()),
-        'por_vehiculo': {str(v): info for v, info in por_vehiculo.items()}
+        'por_vehiculo': {str(v): info for v, info in por_vehiculo.items()},
+        'grupo': info_grupos['grupo'],
+        'grupos': info_grupos['grupos']
     })
 
 # --- Lugar: endpoint de consulta ---
