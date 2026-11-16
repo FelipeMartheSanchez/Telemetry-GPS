@@ -641,6 +641,13 @@
             filter: drop-shadow(0 1px 2px rgba(0,0,0,.45));
         }
 
+        /* Score del viaje elegido junto a su fecha: se ve aunque la lista este plegada */
+        .score-cabecera { flex: none; display: flex; margin-left: auto; }
+        .score-cabecera:empty { display: none; }
+        .score-cabecera .chip-score { padding: 2px 8px; font-size: 0.72rem; }
+        /* Con un viaje elegido la fecha puede bajar a una 2a linea en vez de recortarse */
+        .viajes-cabecera.con-score .viajes-titulo { white-space: normal; line-height: 1.25; }
+
         .viajes-titulo {
             min-width: 0;
             overflow: hidden;
@@ -667,9 +674,9 @@
         .ficha-detalle > span { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
         .punto-estilo { display: inline-block; flex: none; width: 9px; height: 9px; border-radius: 50%; }
         .chip-score { flex: none; padding: 2px 10px; border-radius: 999px; font-size: 0.74rem; font-weight: 700; white-space: nowrap; }
-        .chip-score.bueno { background: #dcfce7; color: #166534; }
-        .chip-score.regular { background: #fef3c7; color: #92400e; }
-        .chip-score.riesgoso { background: #fee2e2; color: #991b1b; }
+        .chip-score.cauteloso { background: #dcfce7; color: #166534; }
+        .chip-score.normal { background: #fef3c7; color: #92400e; }
+        .chip-score.agresivo { background: #fee2e2; color: #991b1b; }
         .chip-score.sin { background: #e2e8f0; color: #475569; font-weight: 600; }
 
         /* Opciones de estilo y eventos: solo aparecen si la ruta trae resultados de ML */
@@ -712,7 +719,7 @@
 
         /* Marca en el mapa donde ocurrio un evento brusco */
         .marca-evento-hist {
-            display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+            display: grid; place-items: center; width: 100%; height: 100%; box-sizing: border-box; border-radius: 11px;
             border: 2px solid #ffffff; background: #dc2626; color: #ffffff;
             font-size: 12px; font-weight: 700; line-height: 1; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
         }
@@ -1042,10 +1049,11 @@
                 top: auto;
                 bottom: 22px;
                 bottom: calc(22px + env(safe-area-inset-bottom, 0px));
-                padding: 4px 12px 5px;
+                padding: 3px 10px 4px;
+                border-radius: 12px;
             }
-            .marca-logo { width: 120px; }
-            .marca-instancia { font-size: 0.62rem; }
+            .marca-logo { width: 108px; }
+            .marca-instancia { font-size: 0.6rem; }
         }
 
         .panel .controles {
@@ -1192,9 +1200,14 @@
             .muestra-viaje { width: 18px; }
             .ficha-viaje > span:last-child:not(.ficha-contenido), .ficha-titulo { white-space: normal; }
             /* Barra de animacion mas compacta */
-            .barra-animacion { padding: 10px 12px; gap: 8px 10px; }
-            .btn-animacion { min-width: 0; min-height: 44px; padding: 8px 16px; }
+            .barra-animacion { padding: 7px 10px; gap: 4px 10px; border-radius: 16px; }
+            .btn-animacion { min-width: 0; min-height: 36px; padding: 5px 14px; font-size: 0.8rem; }
             #sliderRuta { flex: 1 1 90px; }
+            .etiqueta-animacion { font-size: 0.7rem; }
+            /* Cabecera de viajes: fecha y score en una linea */
+            .viajes-cabecera { min-height: 40px; padding: 6px 10px 6px 12px; font-size: 0.78rem; gap: 6px; }
+            .viajes-flecha { width: 26px; height: 26px; }
+            .score-cabecera .chip-score { padding: 2px 7px; font-size: 0.68rem; }
             .panel .campo input,
             .panel .selector-modo { font-size: 16px; }
 
@@ -1350,6 +1363,7 @@
             <button type="button" id="btnViajes" class="viajes-cabecera" aria-expanded="true"
                     aria-controls="leyendaViajes" title="Mostrar u ocultar la lista de viajes">
                 <span class="viajes-titulo"><span id="tituloViajes">Viajes</span> <span id="contadorViajes" class="viajes-contador"></span></span>
+                <span id="scoreCabecera" class="score-cabecera"></span>
                 <span class="viajes-flecha" aria-hidden="true">▾</span>
             </button>
             <button type="button" id="fichaTodos" class="ficha-viaje ficha-todos activa" aria-pressed="true">
@@ -1604,6 +1618,7 @@
         let viajeSeleccionado = null;
 
         const tituloViajes = document.getElementById('tituloViajes');
+        const scoreCabecera = document.getElementById('scoreCabecera');
         const fichaTodos = document.getElementById('fichaTodos');
         let fichasViaje = new Map();   // id -> boton
 
@@ -1616,6 +1631,8 @@
             leyendaViajes.appendChild(grupo);
         }
 
+        // El score de un viaje de menos de SCORE_KM_MINIMOS km se calcula y se guarda, pero no se muestra.
+        const SCORE_KM_MINIMOS = 2;
         // Resumen del viaje que calcula el servidor: score 0-100, % de cada estilo, eventos y km.
         // Devuelve null si el viaje no trae nada de eso (viajes viejos o del celular sin distancia).
         function resumenViaje(v) {
@@ -1649,20 +1666,21 @@
             if (tieneKm) trozo([Number(v.distancia_km).toFixed(1) + ' km']);
 
             let chip = null;
-            if (v.driving_score != null) {
+            const cortoParaScore = tieneKm && Number(v.distancia_km) < SCORE_KM_MINIMOS;
+            if (v.driving_score != null && !cortoParaScore) {
                 const s = Number(v.driving_score);
-                const rango = s >= 80 ? ['bueno', 'Bueno'] : (s >= 60 ? ['regular', 'Regular'] : ['riesgoso', 'Riesgoso']);
+                const rango = s >= 80 ? ['cauteloso', 'Cauteloso'] : (s >= 60 ? ['normal', 'Normal'] : ['agresivo', 'Agresivo']);
                 chip = document.createElement('b');
                 chip.className = 'chip-score ' + rango[0];
                 chip.textContent = s + ' · ' + rango[1];
                 chip.title = 'Driving score: ' + s + ' de 100'
                     + (v.score_estilo != null ? ' · estilo ' + v.score_estilo : '')
                     + (v.score_eventos != null ? ' · eventos ' + v.score_eventos : '');
-            } else if (tienePct || tieneEv) {
+            } else if (tienePct || tieneEv || v.driving_score != null) {
                 chip = document.createElement('b');
                 chip.className = 'chip-score sin';
                 chip.textContent = 'Sin score';
-                chip.title = 'El score se calcula en viajes de 2 km o más';
+                chip.title = 'El score se muestra en viajes de ' + SCORE_KM_MINIMOS + ' km o más';
             }
             return { detalle: detalle, chip: chip };
         }
@@ -1752,6 +1770,8 @@
                 boton.classList.toggle('activa', activa);
                 boton.setAttribute('aria-pressed', String(activa));
             });
+            scoreCabecera.textContent = '';
+            btnViajes.classList.remove('con-score');
             if (viajeSeleccionado === null) {
                 tituloViajes.textContent = 'Viajes';
                 contadorViajes.textContent = `(${total})`;
@@ -1759,6 +1779,9 @@
                 const boton = fichasViaje.get(viajeSeleccionado);
                 tituloViajes.textContent = boton ? boton.title : '';
                 contadorViajes.textContent = '';
+                // Copia del chip de score de la ficha (si el viaje lo tiene)
+                const chip = boton ? boton.querySelector('.chip-score') : null;
+                if (chip) { scoreCabecera.appendChild(chip.cloneNode(true)); btnViajes.classList.add('con-score'); }
             }
         }
 
@@ -2359,28 +2382,39 @@
             });
         }
 
-        // Un icono por cada punto con evento brusco, con su tipo y hora en el popup.
+        function listaEventos(p) {
+            let lista = [];
+            if (p.eventos) lista = p.eventos === 'ninguno' ? [] : p.eventos.split(',');
+            else if (p.evento && p.evento !== 'ninguno') lista = [p.evento];
+            return lista.filter(function(e) { return EVENTOS_UI[e]; });
+        }
+
+        // UN marcador por punto con los iconos de todas sus maniobras; el popup las lista con la hora.
         function pintarEventos(pts, cfg, v) {
             pts.forEach(function(p) {
-                const ev = EVENTOS_UI[p.evento];       // 'ninguno' o null: sin marca
-                if (!ev) return;
+                const lista = listaEventos(p);
+                if (!lista.length) return;
                 const rotulo = vistaAmbos ? cfg.emoji + ' ' : '';
+                const iconos = lista.map(function(e) { return EVENTOS_UI[e].icono; }).join('');
+                const ancho = 22 + 11 * (lista.length - 1);
                 L.marker([p.lat, p.lon], {
                     icon: L.divIcon({
                         className: '',
-                        html: '<div class="marca-evento-hist auto-' + v + '">' + ev.icono + '</div>',
-                        iconSize: [22, 22], iconAnchor: [11, 11]
+                        html: '<div class="marca-evento-hist auto-' + v + '">' + iconos + '</div>',
+                        iconSize: [ancho, 22], iconAnchor: [ancho / 2, 11]
                     }),
                     zIndexOffset: 400,
-                    title: ev.texto,
+                    title: lista.map(function(e) { return EVENTOS_UI[e].texto; }).join(' + '),
                     bubblingMouseEvents: false
-                }).addTo(capaRecorrido).bindPopup('<b>' + rotulo + ev.icono + ' ' + ev.texto + '</b><br>' + p.hora);
+                }).addTo(capaRecorrido).bindPopup('<b>' + rotulo + '</b>'
+                    + lista.map(function(e) { return EVENTOS_UI[e].icono + ' ' + EVENTOS_UI[e].texto; }).join('<br>')
+                    + '<br>' + p.hora);
             });
         }
 
         // Muestra los controles de estilo / eventos solo si hay resultados de ML en la ruta.
         function actualizarControlesML(puntos) {
-            const hay = puntos.some(p => p.estilo || p.evento);
+            const hay = puntos.some(p => p.estilo || p.evento || p.eventos);
             controlesML.classList.toggle('visible', hay);
             controlesML.classList.toggle('modo-estilo', hay && modoColor === 'estilo');
             controlesML.querySelectorAll('button[data-color]').forEach(function(b) {

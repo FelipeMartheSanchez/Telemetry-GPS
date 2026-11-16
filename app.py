@@ -49,25 +49,22 @@ VEHICULO_POR_DEFECTO = 1
 ESTILOS = ('cauteloso', 'normal', 'agresivo', 'sin_dato')
 EVENTOS = ('aceleracion_brusca', 'frenado_brusco', 'giro_derecha_brusco',
            'giro_izquierda_brusco', 'ninguno')
+# "Eventos: a,b" trae TODAS las maniobras del tramo de 10 s ("Evento" trae solo la ultima).
+MANIOBRAS = ('aceleracion_brusca', 'frenado_brusco', 'giro_derecha_brusco', 'giro_izquierda_brusco')
+MAX_EVENTOS_TRAMO = 4
 # Columnas que agrega la migracion SQL de ML (MIGRACION_ML_AUTO1.md)
 COLUMNAS_SCORE_VIAJE = ('driving_score', 'score_estilo', 'score_eventos',
                         'pct_cauteloso', 'pct_normal', 'pct_agresivo',
                         'n_aceleraciones', 'n_frenados', 'n_giros', 'distancia_km')
 
 # --- Driving score del viaje (se calcula al cerrar el viaje) ---
-# score = PESO_ESTILO * score_estilo + (1 - PESO_ESTILO) * score_eventos
-PESO_ESTILO = 0.5
-# Parte de eventos: caida exponencial con "semivida". E = eventos ponderados por
-# cada 10 km; cada SEMIVIDA_E_10KM eventos por 10 km (1 por km) el score de eventos
-# se reduce a la mitad: 100 * 0.5 ** (E / SEMIVIDA_E_10KM). Nunca llega a 0 de golpe,
-# asi un viaje con muchos eventos sigue distinguiendose de uno con muchisimos.
-# Los giros pesan PESO_GIRO: en ciudad son frecuentes y menos peligrosos que un
-# frenazo o una aceleracion brusca.
-SEMIVIDA_E_10KM = 10
-PESO_GIRO = 0.5
+# El ESP32 envia en cada ubicacion "Calificacion: <0-100>" (o "sin_dato"): la
+# calificacion de esos 10 s que da su red neuronal. El score del viaje es el
+# PROMEDIO de esas calificaciones (las "sin_dato" no cuentan). No hay formula.
 ESPERA_SCORE_S = 20             # > TOLERANCIA_FIN_VIAJE: deja llegar el ultimo punto
-# Un viaje mas corto que esto no recibe score: con pocos km un solo evento lo
-# desplomaria sin significar nada (se guardan igual la distancia y los conteos).
+# Rangos de la pagina: >= 80 cauteloso, 60-80 normal, < 60 agresivo.
+# Un viaje mas corto que SCORE_KM_MINIMOS SI recibe score (se calcula y se guarda),
+# pero la pagina no lo muestra. Asi, si mas adelante cambia la regla, ya esta calculado.
 SCORE_KM_MINIMOS = 2.0
 
 # --- Cierre automatico de viajes sin datos ---
@@ -136,7 +133,7 @@ def tabla_tiene_vehiculo(tabla):
 # no existe, se revisa de nuevo cada 30 s.
 _cache_columnas = {}
 _TABLAS_CON_COLUMNAS = ('ubicaciones', 'viajes')
-_COLUMNAS_CONOCIDAS = ('estilo', 'evento') + COLUMNAS_SCORE_VIAJE
+_COLUMNAS_CONOCIDAS = ('estilo', 'evento', 'calificacion', 'eventos') + COLUMNAS_SCORE_VIAJE
 
 def tabla_tiene_columna(tabla, columna):
     assert tabla in _TABLAS_CON_COLUMNAS and columna in _COLUMNAS_CONOCIDAS
@@ -160,6 +157,12 @@ def tabla_tiene_columna(tabla, columna):
 def tiene_columnas_ml_ubicaciones():
     return tabla_tiene_columna('ubicaciones', 'estilo') and tabla_tiene_columna('ubicaciones', 'evento')
 
+def tiene_columna_calificacion():
+    return tabla_tiene_columna('ubicaciones', 'calificacion')
+
+def tiene_columna_eventos():
+    return tabla_tiene_columna('ubicaciones', 'eventos')
+
 def tiene_columnas_score_viajes():
     return all(tabla_tiene_columna('viajes', c) for c in COLUMNAS_SCORE_VIAJE)
 
@@ -172,6 +175,43 @@ def extraer_campo(lineas, nombre, validos):
             valor = m.group(1).lower()
             return valor if valor in validos else None
     return None
+
+def extraer_calificacion(lineas):
+    """Lee "Calificacion: 72.4" (0-100). Devuelve float, o None si no viene,
+    viene "sin_dato" o no es un numero valido. Nunca descarta el paquete."""
+    for linea in lineas:
+        m = re.match(r'^\s*Calificacion\s*:\s*(\S+)\s*$', linea, re.IGNORECASE)
+        if m:
+            try:
+                valor = float(m.group(1))
+            except ValueError:
+                return None
+            return valor if 0 <= valor <= 100 else None
+    return None
+
+def extraer_eventos(lineas):
+    """Lee "Eventos: frenado_brusco,giro_izquierda_brusco" (o "Eventos: ninguno").
+    Devuelve el texto normalizado ("a,b" o "ninguno"), o None si no viene o algun
+    nombre no es valido. Nunca descarta el paquete."""
+    for linea in lineas:
+        m = re.match(r'^\s*Eventos\s*:\s*(.+?)\s*$', linea, re.IGNORECASE)
+        if m:
+            lista = [e.strip().lower() for e in m.group(1).split(',')]
+            if lista == ['ninguno']:
+                return 'ninguno'
+            if 0 < len(lista) <= MAX_EVENTOS_TRAMO and all(e in MANIOBRAS for e in lista):
+                return ','.join(lista)
+            return None
+    return None
+
+def lista_eventos(fila):
+    """Maniobras de un punto: de 'eventos' si existe; si no (puntos viejos o
+    firmware sin la linea Eventos), de 'evento'."""
+    eventos = fila.get('eventos')
+    if eventos:
+        return [] if eventos == 'ninguno' else eventos.split(',')
+    evento = fila.get('evento')
+    return [evento] if evento in MANIOBRAS else []
 
 def extraer_vehiculo(lineas):
     """Lee la linea "Vehiculo: N" de un paquete. Devuelve VEHICULO_POR_DEFECTO
@@ -202,6 +242,12 @@ def guardar_en_mysql(datos):
         if tiene_columnas_ml_ubicaciones():
             columnas += ['estilo', 'evento']
             valores += [datos.get('estilo'), datos.get('evento')]
+        if tiene_columna_calificacion():
+            columnas.append('calificacion')
+            valores.append(datos.get('calificacion'))
+        if tiene_columna_eventos():
+            columnas.append('eventos')
+            valores.append(datos.get('eventos'))
         consulta = (f"INSERT INTO ubicaciones ({', '.join(columnas)}) "
                     f"VALUES ({', '.join(['%s'] * len(columnas))})")
         conexion = conectar_mysql()
@@ -339,6 +385,74 @@ def coordenadas_validas(lat_texto, lon_texto):
         return False
     return not (lat == 0 and lon == 0)
 
+# --- Calificacion del viaje en vivo ---
+# Por vehiculo: suma y cantidad de calificaciones de 10 s del viaje actual y los km
+# recorridos. Se reinicia con INICIO_RECORRIDO. Si el servidor se reinicia a mitad de
+# un viaje, se reconstruye desde la base de datos con el primer punto que llegue.
+_viaje_vivo = {}
+_lock_viaje_vivo = threading.Lock()
+
+def reiniciar_viaje_vivo(vehiculo):
+    with _lock_viaje_vivo:
+        _viaje_vivo[vehiculo] = {'suma': 0.0, 'n': 0, 'metros': 0.0, 'previo': None, 'ultima_hora': None}
+
+def reconstruir_viaje_vivo(vehiculo):
+    """Estado del viaje abierto de ese vehiculo leido de la base de datos (o vacio)."""
+    estado = {'suma': 0.0, 'n': 0, 'metros': 0.0, 'previo': None, 'ultima_hora': None}
+    try:
+        if not tabla_tiene_vehiculo('viajes') or not tabla_tiene_vehiculo('ubicaciones'):
+            return estado
+        conexion = conectar_mysql()
+        cursor = conexion.cursor(dictionary=True)
+        cursor.execute("SELECT inicio FROM viajes WHERE vehiculo = %s AND fin IS NULL ORDER BY inicio DESC LIMIT 1",
+                       (vehiculo,))
+        viaje = cursor.fetchone()
+        if viaje:
+            extra = ", calificacion" if tiene_columna_calificacion() else ""
+            cursor.execute(f"SELECT latitud, longitud, fecha, hora_col{extra} FROM ubicaciones "
+                           "WHERE vehiculo = %s AND fecha_registro >= %s ORDER BY fecha_registro ASC",
+                           (vehiculo, viaje['inicio']))
+            for f in cursor.fetchall():
+                sumar_punto_vivo(estado, f.get('latitud'), f.get('longitud'), f.get('calificacion'),
+                                 (f.get('fecha'), f.get('hora_col')))
+        cursor.close()
+        conexion.close()
+    except Exception as error:
+        print(f"Aviso: no se pudo reconstruir el viaje en vivo del vehiculo {vehiculo}: {error}")
+    return estado
+
+def sumar_punto_vivo(estado, lat_texto, lon_texto, calificacion, hora):
+    if hora == estado['ultima_hora']:
+        return                                  # mensaje repetido: no se cuenta dos veces
+    estado['ultima_hora'] = hora
+    try:
+        punto = (float(lat_texto), float(lon_texto))
+        if estado['previo']:
+            estado['metros'] += distancia_metros(*estado['previo'], *punto)
+        estado['previo'] = punto
+    except (TypeError, ValueError):
+        pass
+    if calificacion is not None:
+        estado['suma'] += float(calificacion)
+        estado['n'] += 1
+
+def actualizar_viaje_vivo(datos):
+    """Suma el punto al viaje en vivo. Devuelve calificacion_viaje (promedio hasta
+    ahora, o None) y km_viaje. Para un vehiculo que no envia calificacion, ambos None."""
+    if datos.get('estilo') is None and datos.get('calificacion') is None:
+        return {'calificacion_viaje': None, 'km_viaje': None}      # celular: sin ML
+    vehiculo = datos['vehiculo']
+    with _lock_viaje_vivo:
+        estado = _viaje_vivo.get(vehiculo)
+    if estado is None:
+        estado = reconstruir_viaje_vivo(vehiculo)
+    with _lock_viaje_vivo:
+        estado = _viaje_vivo.setdefault(vehiculo, estado)
+        sumar_punto_vivo(estado, datos['latitud'], datos['longitud'], datos.get('calificacion'),
+                         (datos['fecha'], datos['hora_col']))
+        promedio = round(estado['suma'] / estado['n'], 1) if estado['n'] else None
+        return {'calificacion_viaje': promedio, 'km_viaje': round(estado['metros'] / 1000, 2)}
+
 def udp_listener():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', UDP_PORT))
@@ -363,6 +477,7 @@ def udp_listener():
                 print(f"Marca descartada: vehiculo invalido desde {addr[0]}.")
                 continue
             if marca == "INICIO_RECORRIDO":
+                reiniciar_viaje_vivo(vehiculo)
                 registrar_inicio_viaje(vehiculo)
             else:
                 registrar_fin_viaje(vehiculo)
@@ -388,8 +503,12 @@ def udp_listener():
                 'vehiculo': vehiculo,
                 # Solo el Auto 1 (ESP32) los envia; el celular los deja en None.
                 'estilo': extraer_campo(lineas[5:], 'Estilo', ESTILOS),
-                'evento': extraer_campo(lineas[5:], 'Evento', EVENTOS)
+                'evento': extraer_campo(lineas[5:], 'Evento', EVENTOS),
+                'calificacion': extraer_calificacion(lineas[5:]),
+                'eventos': extraer_eventos(lineas[5:])
             }
+            # Promedio del viaje hasta ahora y km recorridos (para la tarjeta en vivo)
+            datos_json.update(actualizar_viaje_vivo(datos_json))
 
             socketio.emit('actualizacion_gps', datos_json)
             guardar_en_mysql(datos_json)
@@ -468,7 +587,7 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
     usa_col_viajes = tabla_tiene_vehiculo('viajes')
     usa_ml = tiene_columnas_ml_ubicaciones()
     usa_score = tiene_columnas_score_viajes()
-    extra_ubic = ", estilo, evento" if usa_ml else ""
+    extra_ubic = (", estilo, evento" if usa_ml else "") + (", eventos" if tiene_columna_eventos() else "")
     extra_viaje = (", " + ", ".join(COLUMNAS_SCORE_VIAJE)) if usa_score else ""
 
     puntos = []
@@ -563,7 +682,8 @@ def consultar_historial(desde_utc, hasta_utc, vehiculos=VEHICULOS):
                 'vehiculo': v,
                 # Resultados de ML (None si la columna no existe o el vehiculo no los envia)
                 'estilo': fila.get('estilo'),
-                'evento': fila.get('evento')
+                'evento': fila.get('evento'),
+                'eventos': fila.get('eventos')
             })
 
         # Solo se informan los viajes que realmente tienen puntos en la consulta.
@@ -620,14 +740,13 @@ def distancia_metros(lat1, lon1, lat2, lon2):
 def calcular_score_viaje(vehiculo, viaje_id):
     """Calcula y guarda en viajes el score de un viaje ya cerrado.
 
-    Sirve para cualquier vehiculo: si el viaje no tiene resultados de ML (el
-    celular no los envia) solo se guarda la distancia y el score queda en NULL.
-
-      score_estilo  = 100 * (%cauteloso + 0.5 * %normal)          (modelo OBD)
-      score_eventos = 100 * 0.5 ** (E / 10), E = (acel + frenos + 0.5 * giros) * 10 / max(km, 1)   (modelo IMU)
-      driving_score = PESO_ESTILO * score_estilo + (1 - PESO_ESTILO) * score_eventos
-    Si falta una de las dos partes, el score es la otra. Los puntos sin estilo
-    o evento (NULL, 'sin_dato') no cuentan.
+    driving_score = promedio de las calificaciones de 10 s que envio el vehiculo
+    durante el viaje (columna ubicaciones.calificacion). Los puntos sin calificacion
+    (NULL: detenido, sin OBD o el celular) no cuentan. Si no hay ninguna, queda NULL.
+    Se calcula para TODOS los viajes, tambien los de menos de SCORE_KM_MINIMOS km;
+    la pagina decide si lo muestra. score_estilo y score_eventos ya no se usan (NULL).
+    Se guardan tambien la distancia, el % de cada estilo y los conteos de eventos
+    (todas las maniobras de cada tramo, leidas de la columna eventos).
     """
     try:
         if not tiene_columnas_score_viajes() or not tabla_tiene_vehiculo('ubicaciones'):
@@ -640,7 +759,8 @@ def calcular_score_viaje(vehiculo, viaje_id):
         if not viaje or not viaje['fin']:
             cursor.close(); conexion.close()
             return
-        extra = ", estilo, evento" if con_ml else ""
+        extra = ((", estilo, evento" if con_ml else "") + (", calificacion" if tiene_columna_calificacion() else "")
+                 + (", eventos" if tiene_columna_eventos() else ""))
         cursor.execute(
             f"""
             SELECT latitud, longitud, fecha, hora_col{extra} FROM ubicaciones
@@ -671,8 +791,7 @@ def calcular_score_viaje(vehiculo, viaje_id):
         km = round(metros / 1000, 2)
 
         estilos = [f.get('estilo') for f in filas if f.get('estilo') in ('cauteloso', 'normal', 'agresivo')]
-        hay_evento_dato = any(f.get('evento') for f in filas)
-        hay_ml = any(f.get('estilo') or f.get('evento') for f in filas)
+        hay_ml = any(f.get('estilo') or f.get('evento') or f.get('calificacion') is not None for f in filas)
 
         if not hay_ml:
             # Viaje sin ML (celular): solo la distancia.
@@ -682,33 +801,21 @@ def calcular_score_viaje(vehiculo, viaje_id):
             print(f"--> Viaje {viaje_id} (vehiculo {vehiculo}) sin ML: {km} km, sin score.")
             return
 
-        eventos = [f.get('evento') for f in filas if f.get('evento') and f['evento'] != 'ninguno']
+        # Todas las maniobras de cada tramo (columna eventos; evento en puntos viejos)
+        eventos = [e for f in filas for e in lista_eventos(f)]
         n_acel = eventos.count('aceleracion_brusca')
         n_fren = eventos.count('frenado_brusco')
         n_giros = eventos.count('giro_derecha_brusco') + eventos.count('giro_izquierda_brusco')
 
         pct = {'cauteloso': None, 'normal': None, 'agresivo': None}
-        score_estilo = None
         if estilos:
             n = len(estilos)
             pct = {s: round(100 * estilos.count(s) / n, 2) for s in pct}
-            score_estilo = 100 * (estilos.count('cauteloso') + 0.5 * estilos.count('normal')) / n
-        score_eventos = None
-        if hay_evento_dato:
-            eventos_pond = n_acel + n_fren + PESO_GIRO * n_giros
-            e_10km = eventos_pond * 10 / max(km, 1)
-            score_eventos = 100 * 0.5 ** (e_10km / SEMIVIDA_E_10KM)
 
-        score = None
-        if km >= SCORE_KM_MINIMOS:
-            if score_estilo is not None and score_eventos is not None:
-                score = PESO_ESTILO * score_estilo + (1 - PESO_ESTILO) * score_eventos
-            elif score_estilo is not None:
-                score = score_estilo
-            else:
-                score = score_eventos
-        else:
-            score_estilo = score_eventos = None     # viaje demasiado corto
+        # Score del viaje: promedio de las calificaciones de 10 s (sin formula).
+        califs = [float(f['calificacion']) for f in filas if f.get('calificacion') is not None]
+        score = sum(califs) / len(califs) if califs else None
+        score_estilo = score_eventos = None     # columnas de la formula anterior: ya no se usan
 
         def r(x):
             return None if x is None else int(round(x))
@@ -727,7 +834,8 @@ def calcular_score_viaje(vehiculo, viaje_id):
         conexion.commit()
         cursor.close()
         conexion.close()
-        print(f"--> Score del viaje {viaje_id} (vehiculo {vehiculo}): {r(score)} ({km} km)")
+        print(f"--> Score del viaje {viaje_id} (vehiculo {vehiculo}): {r(score)} "
+              f"(promedio de {len(califs)} calificaciones, {km} km)")
     except Exception as error:
         print(f"Error calculando el score del viaje: {error}")
 
