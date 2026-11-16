@@ -524,6 +524,7 @@
         }
         .chip-estilo::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--color-estilo, #9aa0a6); }
         .ml-evento { font-size: 0.82rem; font-weight: 600; color: #0f172a; text-align: right; }
+        .ml-calif { font-size: 0.82rem; font-weight: 700; color: #0f172a; text-align: right; }
         .ml-evento.reciente { color: #b91c1c; }
         .ml-evento small { display: block; font-weight: 500; color: #64748b; font-size: 0.68rem; }
 
@@ -555,9 +556,10 @@
         .marca-evento {
             display: grid;
             place-items: center;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
+            width: 100%;              /* el tamaño lo da iconSize: mas ancho si hay varias maniobras */
+            height: 100%;
+            box-sizing: border-box;
+            border-radius: 12px;
             border: 2px solid #ffffff;
             background: #dc2626;
             color: #ffffff;
@@ -714,6 +716,10 @@
             giro_derecha_brusco:   { texto: 'Giro brusco a la derecha',  icono: '↱' },
             giro_izquierda_brusco: { texto: 'Giro brusco a la izquierda', icono: '↰' }
         };
+        // Rangos de la calificacion (iguales al historial): >= 80 cauteloso, 60-80 normal, < 60 agresivo.
+        function categoriaCalificacion(s) { return s >= 80 ? 'cauteloso' : (s >= 60 ? 'normal' : 'agresivo'); }
+        // La calificacion del viaje solo se muestra desde 2 km (igual que en el historial).
+        const SCORE_KM_MINIMOS = 2;
         const MAX_MARCAS_EVENTO = 30;       // por auto: las mas viejas se quitan del mapa
         const RECIENTE_MS = 60000;          // un evento se resalta en la tarjeta durante 1 min
         const SIN_SENAL_MS = 30000;   // sin datos por mas de 30 s = "sin senal"
@@ -962,6 +968,14 @@
                         <span class="chip-estilo" data-campo="estilo">---</span>
                     </div>
                     <div class="ml-fila">
+                        <span class="dato-etiqueta">Calificación (10 s)</span>
+                        <span class="ml-calif" data-campo="calificacion">---</span>
+                    </div>
+                    <div class="ml-fila">
+                        <span class="dato-etiqueta">Calificación del viaje</span>
+                        <span class="chip-estilo" data-campo="calificacion_viaje">---</span>
+                    </div>
+                    <div class="ml-fila">
                         <span class="dato-etiqueta">Último evento</span>
                         <span class="ml-evento" data-campo="evento">Ninguno aún</span>
                     </div>
@@ -999,6 +1013,21 @@
         const avisoEvento = document.getElementById('avisoEvento');
         let temporizadorAviso = null;
 
+        // Maniobras de un punto: de 'eventos' ("a,b" o "ninguno") si viene; si no, de 'evento'.
+        // Devuelve { lista, icono, texto } con todas juntas, o null si no hubo ninguna.
+        function combinarEventos(eventos, evento) {
+            let lista = [];
+            if (eventos) lista = eventos === 'ninguno' ? [] : eventos.split(',');
+            else if (evento && evento !== 'ninguno') lista = [evento];
+            lista = lista.filter(function(e) { return EVENTOS_UI[e]; });
+            if (!lista.length) return null;
+            return {
+                lista: lista,
+                icono: lista.map(function(e) { return EVENTOS_UI[e].icono; }).join(''),
+                texto: lista.map(function(e) { return EVENTOS_UI[e].texto; }).join(' + ')
+            };
+        }
+
         function mostrarAvisoEvento(auto, ev) {
             avisoEvento.textContent = auto.cfg.emoji + ' ' + auto.cfg.nombre + ' · ' + ev.icono + ' ' + ev.texto;
             avisoEvento.classList.add('visible');
@@ -1006,18 +1035,21 @@
             temporizadorAviso = setTimeout(function() { avisoEvento.classList.remove('visible'); }, 6000);
         }
 
-        // Pone un circulo con el icono del evento en el lugar donde ocurrio.
+        // Pone UN marcador con los iconos de todas las maniobras del punto (posicion del mensaje).
         function marcarEventoEnMapa(auto, ev, latlng, hora) {
+            const ancho = 24 + 12 * (ev.lista.length - 1);
             const marca = L.marker(latlng, {
                 icon: L.divIcon({
                     className: '',
                     html: '<div class="marca-evento auto-' + auto.id + '">' + ev.icono + '</div>',
-                    iconSize: [24, 24], iconAnchor: [12, 12]
+                    iconSize: [ancho, 24], iconAnchor: [ancho / 2, 12]
                 }),
                 zIndexOffset: -100,
                 title: ev.texto
             }).addTo(map);
-            marca.bindPopup('<b>' + auto.cfg.emoji + ' ' + auto.cfg.nombre + '</b><br>' + ev.icono + ' ' + ev.texto + '<br>' + hora);
+            marca.bindPopup('<b>' + auto.cfg.emoji + ' ' + auto.cfg.nombre + '</b><br>'
+                + ev.lista.map(function(e) { return EVENTOS_UI[e].icono + ' ' + EVENTOS_UI[e].texto; }).join('<br>')
+                + '<br>' + hora);
             auto.marcasEvento.push(marca);
             if (auto.marcasEvento.length > MAX_MARCAS_EVENTO) map.removeLayer(auto.marcasEvento.shift());
         }
@@ -1025,7 +1057,7 @@
         // Actualiza la tarjeta con el estilo / evento del punto recibido. Si el vehiculo no los
         // envia (null), no se muestra nada: ni "sin dato" ni bloque vacio.
         function actualizarML(auto, msg, latlng) {
-            const trae = Boolean(msg.estilo || msg.evento);
+            const trae = Boolean(msg.estilo || msg.evento || msg.eventos);
             if (trae) auto.bloqueML.classList.remove('oculto');
             if (!trae) return;
 
@@ -1034,7 +1066,22 @@
                 auto.el.estilo.textContent = est.texto;
                 auto.el.estilo.style.setProperty('--color-estilo', est.color);
             }
-            const ev = EVENTOS_UI[msg.evento];       // undefined con 'ninguno' o null
+            // Calificacion de los ultimos 10 s (null = sin dato: detenido o sin OBD)
+            auto.el.calificacion.textContent = msg.calificacion != null ? Number(msg.calificacion).toFixed(1) : 'Sin dato';
+            // Promedio del viaje hasta ahora: se muestra desde SCORE_KM_MINIMOS km
+            const cv = auto.el.calificacion_viaje;
+            if (msg.calificacion_viaje == null) {
+                cv.textContent = 'Sin dato aún';
+                cv.style.setProperty('--color-estilo', ESTILOS_UI.sin_dato.color);
+            } else if (msg.km_viaje != null && msg.km_viaje < SCORE_KM_MINIMOS) {
+                cv.textContent = 'Desde ' + SCORE_KM_MINIMOS + ' km (' + Number(msg.km_viaje).toFixed(1) + ' km)';
+                cv.style.setProperty('--color-estilo', ESTILOS_UI.sin_dato.color);
+            } else {
+                const cat = ESTILOS_UI[categoriaCalificacion(msg.calificacion_viaje)];
+                cv.textContent = Number(msg.calificacion_viaje).toFixed(1) + ' · ' + cat.texto;
+                cv.style.setProperty('--color-estilo', cat.color);
+            }
+            const ev = combinarEventos(msg.eventos, msg.evento);   // todas las maniobras del tramo, o null
             if (ev) {
                 auto.ultimoEvento = { ev: ev, hora: msg.hora_col, t: Date.now() };
                 mostrarAvisoEvento(auto, ev);
