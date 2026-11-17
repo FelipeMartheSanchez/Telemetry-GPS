@@ -1221,8 +1221,77 @@ def api_direccion():
     _cache_direccion[clave] = resultado
     return jsonify(resultado)
 
+# --- Emulador del Auto 1 (solo en la instancia de pruebas) ---
+# La pagina /emulador imita a la ESP32 del Auto 1: arma el MISMO mensaje que
+# envia la placa y lo manda por UDP a este mismo servidor, asi pasa por
+# udp_listener igual que un dato real (se guarda, se emite en vivo, abre y
+# cierra viajes y calcula el score). Solo se activa con EMULADOR=1 en el .env:
+# ponerlo SOLO en dev, para no llenar la base de produccion de viajes falsos.
+EMULADOR_ACTIVO = os.getenv('EMULADOR', '0').strip() == '1'
+EMULADOR_VEHICULO = 1
+
+def armar_mensaje_emulador(d):
+    """Arma el texto UDP con el formato de la ESP32 a partir de lo que envia la
+    pagina. Lanza ValueError si algun dato no es valido."""
+    tipo = d.get('tipo')
+    if tipo in ('inicio', 'fin'):
+        marca = 'INICIO_RECORRIDO' if tipo == 'inicio' else 'FIN_RECORRIDO'
+        return f"{marca}\nVehiculo: {EMULADOR_VEHICULO}"
+    if tipo != 'ubicacion':
+        raise ValueError('tipo debe ser inicio, fin o ubicacion')
+    lat, lon = float(d['lat']), float(d['lon'])
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise ValueError('coordenadas fuera de rango')
+    estilo = d.get('estilo', 'sin_dato')
+    if estilo not in ESTILOS:
+        raise ValueError('estilo invalido')
+    eventos = d.get('eventos') or []
+    if not isinstance(eventos, list) or len(eventos) > MAX_EVENTOS_TRAMO or not all(e in MANIOBRAS for e in eventos):
+        raise ValueError('eventos invalidos')
+    calificacion = d.get('calificacion')
+    if calificacion is not None:
+        calificacion = float(calificacion)
+        if not 0 <= calificacion <= 100:
+            raise ValueError('calificacion fuera de 0-100')
+    ahora = datetime.now(UTC)
+    return '\n'.join([
+        'Ubicacion GPS',
+        f'Latitud: {lat:.6f}',
+        f'Longitud: {lon:.6f}',
+        f"Hora UTC: {ahora.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Hora Colombia: {ahora.astimezone(BOGOTA).strftime('%Y-%m-%d %H:%M:%S')}",
+        f'Vehiculo: {EMULADOR_VEHICULO}',
+        f'Estilo: {estilo}',
+        f"Evento: {eventos[-1] if eventos else 'ninguno'}",
+        f"Calificacion: {'sin_dato' if calificacion is None else f'{calificacion:.1f}'}",
+        f"Eventos: {','.join(eventos) if eventos else 'ninguno'}",
+    ])
+
+@app.route('/emulador')
+def emulador():
+    if not EMULADOR_ACTIVO:
+        return 'No encontrado', 404
+    return render_template('emulador.html', nombre_pagina=NOMBRE_PAGINA)
+
+@app.route('/api/emulador', methods=['POST'])
+def api_emulador():
+    if not EMULADOR_ACTIVO:
+        return jsonify({'error': 'El emulador no esta activo en esta instancia'}), 404
+    try:
+        mensaje = armar_mensaje_emulador(request.get_json(silent=True) or {})
+    except (KeyError, TypeError, ValueError) as error:
+        return jsonify({'error': f'Dato invalido: {error}'}), 400
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.sendto(mensaje.encode('utf-8'), ('127.0.0.1', UDP_PORT))
+    finally:
+        sock.close()
+    return jsonify({'ok': True, 'mensaje': mensaje})
+
 if __name__ == '__main__':
     print(f"Página: {NOMBRE_PAGINA}")
+    if EMULADOR_ACTIVO:
+        print("Emulador del Auto 1 ACTIVO en /emulador (EMULADOR=1 en el .env)")
     socketio.start_background_task(udp_listener)
     socketio.start_background_task(vigilar_inactividad)
     print(f"Iniciando servidor Web en el puerto {WEB_PORT}...")
