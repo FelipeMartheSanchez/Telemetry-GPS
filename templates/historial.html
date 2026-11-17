@@ -1713,8 +1713,9 @@
             leyendaViajes.appendChild(grupo);
         }
 
-        // El score de un viaje de menos de SCORE_KM_MINIMOS km se calcula y se guarda, pero no se muestra.
-        const SCORE_KM_MINIMOS = 2;
+        // El servidor guarda el score de todos los viajes; aqui se decide desde cuantos km se muestra.
+        // 0 = se muestra en todos los viajes. Para volver a exigir un minimo, pon los km aqui.
+        const SCORE_KM_MINIMOS = 0;
         // Resumen del viaje que calcula el servidor: score 0-100, % de cada estilo, eventos y km.
         // Devuelve null si el viaje no trae nada de eso (viajes viejos o del celular sin distancia).
         function resumenViaje(v) {
