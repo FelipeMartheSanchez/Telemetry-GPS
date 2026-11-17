@@ -718,8 +718,9 @@
         };
         // Rangos de la calificacion (iguales al historial): >= 80 cauteloso, 60-80 normal, < 60 agresivo.
         function categoriaCalificacion(s) { return s >= 80 ? 'cauteloso' : (s >= 60 ? 'normal' : 'agresivo'); }
-        // La calificacion del viaje solo se muestra desde 2 km (igual que en el historial).
-        const SCORE_KM_MINIMOS = 2;
+        // Distancia minima para mostrar la calificacion del viaje (igual que en el historial).
+        // 0 = se muestra en todos los viajes. Para volver a exigir un minimo, pon los km aqui.
+        const SCORE_KM_MINIMOS = 0;
         const MAX_MARCAS_EVENTO = 30;       // por auto: las mas viejas se quitan del mapa
         const RECIENTE_MS = 60000;          // un evento se resalta en la tarjeta durante 1 min
         const SIN_SENAL_MS = 30000;   // sin datos por mas de 30 s = "sin senal"
