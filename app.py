@@ -1229,6 +1229,24 @@ def api_direccion():
 # ponerlo SOLO en dev, para no llenar la base de produccion de viajes falsos.
 EMULADOR_ACTIVO = os.getenv('EMULADOR', '0').strip() == '1'
 EMULADOR_VEHICULO = 1
+# Destinos, igual que la ESP32 (que envia a los 4 servidores):
+#   'local' -> solo esta instancia (127.0.0.1, su propio UDP_PORT)
+#   'dev'   -> las 4 instancias, puerto UDP de dev
+#   'prod'  -> las 4 instancias, puerto UDP de produccion (como la placa real)
+EMULADOR_HOSTS = [h.strip() for h in os.getenv(
+    'EMULADOR_HOSTS',
+    'felipegps.duckdns.org,carlosgps.duckdns.org,davidgps.duckdns.org,alejandrogps.duckdns.org'
+).split(',') if h.strip()]
+EMULADOR_PUERTOS = {'dev': int(os.getenv('EMULADOR_PUERTO_DEV', '5001')),
+                    'prod': int(os.getenv('EMULADOR_PUERTO_PROD', '5000'))}
+
+def destinos_emulador(destino):
+    """Lista de (host, puerto) a los que se envia, segun el destino elegido."""
+    if destino == 'local':
+        return [('127.0.0.1', UDP_PORT)]
+    if destino in EMULADOR_PUERTOS:
+        return [(h, EMULADOR_PUERTOS[destino]) for h in EMULADOR_HOSTS]
+    raise ValueError('destino debe ser local, dev o prod')
 
 def armar_mensaje_emulador(d):
     """Arma el texto UDP con el formato de la ESP32 a partir de lo que envia la
@@ -1277,16 +1295,27 @@ def emulador():
 def api_emulador():
     if not EMULADOR_ACTIVO:
         return jsonify({'error': 'El emulador no esta activo en esta instancia'}), 404
+    datos = request.get_json(silent=True) or {}
     try:
-        mensaje = armar_mensaje_emulador(request.get_json(silent=True) or {})
+        mensaje = armar_mensaje_emulador(datos)
+        destinos = destinos_emulador(datos.get('destino', 'local'))
     except (KeyError, TypeError, ValueError) as error:
         return jsonify({'error': f'Dato invalido: {error}'}), 400
+    # UDP no confirma la llegada: "enviado" = el paquete salio hacia ese servidor.
+    resultado = []
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        sock.sendto(mensaje.encode('utf-8'), ('127.0.0.1', UDP_PORT))
+        for host, puerto in destinos:
+            try:
+                sock.sendto(mensaje.encode('utf-8'), (host, puerto))
+                resultado.append({'host': host, 'puerto': puerto, 'ok': True})
+            except OSError as error:            # p. ej. el dominio no resuelve
+                resultado.append({'host': host, 'puerto': puerto, 'ok': False, 'error': str(error)})
     finally:
         sock.close()
-    return jsonify({'ok': True, 'mensaje': mensaje})
+    if not any(r['ok'] for r in resultado):
+        return jsonify({'error': 'No se pudo enviar a ningun destino', 'destinos': resultado}), 502
+    return jsonify({'ok': True, 'mensaje': mensaje, 'destinos': resultado})
 
 if __name__ == '__main__':
     print(f"Página: {NOMBRE_PAGINA}")

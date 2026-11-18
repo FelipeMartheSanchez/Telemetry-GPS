@@ -129,6 +129,14 @@
         .controles-viaje button { border-radius: 12px; min-height: 44px; }
 
         /* Registro de mensajes */
+        .destino { margin-bottom: 8px; }
+        .destino select {
+            flex: 1 1 180px; min-width: 0; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--borde);
+            font-family: inherit; font-size: 16px; background: #ffffff; color: var(--tinta);
+        }
+        @media (min-width: 761px) { .destino select { font-size: 0.8rem; } }
+        .aviso-destino { margin: 0 0 8px; font-size: 0.72rem; color: var(--gris); line-height: 1.35; }
+        .aviso-destino.prod { color: #991b1b; font-weight: 600; }
         details.registro summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; }
         #registro {
             margin: 8px 0 0; max-height: 220px; overflow: auto; padding: 8px; border-radius: 10px;
@@ -174,6 +182,15 @@
             <!-- 2. Viaje -->
             <section class="tarjeta">
                 <h2>2 · Viaje</h2>
+                <div class="fila destino">
+                    <label class="etq" for="selDestino">Enviar a</label>
+                    <select id="selDestino">
+                        <option value="dev" selected>4 instancias · dev</option>
+                        <option value="prod">4 instancias · producción</option>
+                        <option value="local">Solo esta instancia</option>
+                    </select>
+                </div>
+                <div class="aviso-destino" id="avisoDestino"></div>
                 <div class="controles-viaje">
                     <button type="button" id="btnIniciar" class="primario">▶ Iniciar viaje</button>
                     <button type="button" id="btnPausa" disabled>⏸ Detener carro</button>
@@ -406,13 +423,31 @@
         });
 
         // ===== Envio al servidor =====
+        // El destino se fija al iniciar el viaje: INICIO, puntos y FIN van a los mismos servidores.
+        let destinoViaje = 'dev';
+        const TEXTO_DESTINO = {
+            dev: 'Envía a felipegps, carlosgps, davidgps y alejandrogps por el puerto UDP 5001: llega a las 4 páginas de dev (8080). Los viajes quedan en las bases de dev.',
+            prod: '⚠ Envía a los 4 servidores por el puerto UDP 5000, igual que la ESP32: los viajes falsos quedan en las bases reales de todos.',
+            local: 'Solo llega a esta instancia.'
+        };
+        function pintarDestino() {
+            const v = $('selDestino').value;
+            $('avisoDestino').textContent = TEXTO_DESTINO[v];
+            $('avisoDestino').classList.toggle('prod', v === 'prod');
+        }
+        $('selDestino').addEventListener('change', pintarDestino);
+
         async function enviar(cuerpo) {
+            cuerpo.destino = destinoViaje;
             const r = await fetch('/api/emulador', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
             });
             const datos = await r.json().catch(() => ({}));
             if (!r.ok) throw new Error(datos.error || ('HTTP ' + r.status));
-            registrar(datos.mensaje);
+            const fallidos = (datos.destinos || []).filter(d => !d.ok);
+            const resumen = (datos.destinos || []).map(d => (d.ok ? '✓ ' : '✗ ') + d.host + ':' + d.puerto).join('  ');
+            registrar(datos.mensaje + (resumen ? '\n→ ' + resumen : ''));
+            if (fallidos.length) mostrarEstado('No se pudo enviar a: ' + fallidos.map(d => d.host).join(', '), true);
             return datos;
         }
         function registrar(texto) {
@@ -496,6 +531,8 @@
 
         async function iniciar() {
             if (ruta.length < 2 || sim.enViaje || Date.now() < esperaHasta) return;
+            destinoViaje = $('selDestino').value;
+            if (destinoViaje === 'prod' && !confirm('Vas a enviar datos FALSOS a las 4 páginas de producción (como la ESP32). Los viajes quedarán en las bases reales de todos. ¿Continuar?')) return;
             $('btnIniciar').disabled = true;
             try {
                 await enviar({ tipo: 'inicio' });
@@ -626,6 +663,7 @@
             $('btnEnviarYa').disabled = !sim.enViaje || sim.sinSenal;
             $('btnDeshacer').disabled = sim.enViaje || !waypoints.length;
             $('btnBorrar').disabled = sim.enViaje || !waypoints.length;
+            $('selDestino').disabled = sim.enViaje;      // no se cambia a mitad de viaje
         }
 
         // Mantener la pantalla encendida durante el viaje (si el navegador lo permite):
@@ -643,6 +681,7 @@
 
         pintarPendientes();
         pintarEstado();
+        pintarDestino();
         actualizarBotones();
     </script>
 </body>
