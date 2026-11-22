@@ -223,7 +223,18 @@
                 <div class="linea-estado" id="txtEstado">Marca una ruta y pulsa «Iniciar viaje».</div>
             </section>
 
+            {% if solo_ruta %}
+            <!-- UBICACION_DESDE=emulador: estilo, calificacion y eventos vienen de la ESP32 -->
             <section class="tarjeta">
+                <h2>3 · Estilo y eventos</h2>
+                <p class="ayuda">Vienen de la ESP32 del Auto 1: el emulador solo envía la ruta.
+                    Cada ubicación se guarda con el último estilo y calificación de la placa
+                    y con las maniobras que detectó desde la ubicación anterior.
+                    No presiones el botón BOOT de la placa: dejaría de enviar estilo y eventos.</p>
+            </section>
+            {% endif %}
+
+            <section class="tarjeta"{% if solo_ruta %} style="display:none"{% endif %}>
                 <h2>3 · Eventos bruscos</h2>
                 <p class="ayuda">Cada toque agrega la maniobra al próximo envío (máx. 4 por tramo de 10 s, como la placa).</p>
                 <div class="eventos">
@@ -240,7 +251,7 @@
             </section>
 
             <!-- 4. Lo que "detecta" la placa -->
-            <section class="tarjeta">
+            <section class="tarjeta"{% if solo_ruta %} style="display:none"{% endif %}>
                 <h2>4 · Estilo y calificación</h2>
                 <div class="fila">
                     <label class="etq">Estilo</label>
@@ -273,6 +284,8 @@
     <script>
         // ===== Configuracion =====
         const INTERVALO_S = 10;          // la ESP32 envia cada 10 s
+        // UBICACION_DESDE=emulador: solo se emula la ruta (estilo y eventos vienen de la ESP32)
+        const SOLO_RUTA = {{ 'true' if solo_ruta else 'false' }};
         const TICK_MS = 200;             // paso de la animacion
         // Tras FIN_RECORRIDO el servidor acepta puntos 15 s mas para ese viaje y
         // calcula el score a los 20 s: un viaje nuevo antes de eso se mezclaria.
@@ -462,11 +475,13 @@
             if (sim.sinSenal || enviando) return;
             const p = posicionEn(sim.metros);
             if (!p) return;
-            const eventos = pendientes.slice();
-            const cuerpo = {
-                tipo: 'ubicacion', lat: p[0], lon: p[1], estilo: estilo, eventos: eventos,
-                calificacion: $('chkSinCalif').checked ? null : Number($('rngCalif').value)
-            };
+            const eventos = SOLO_RUTA ? [] : pendientes.slice();
+            const cuerpo = SOLO_RUTA
+                ? { tipo: 'ubicacion', lat: p[0], lon: p[1], estilo: 'sin_dato', eventos: [], calificacion: null }
+                : {
+                    tipo: 'ubicacion', lat: p[0], lon: p[1], estilo: estilo, eventos: eventos,
+                    calificacion: $('chkSinCalif').checked ? null : Number($('rngCalif').value)
+                };
             enviando = true;
             try {
                 const falta = 1100 - (Date.now() - ultimoEnvioMs);
