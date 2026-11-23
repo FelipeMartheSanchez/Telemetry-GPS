@@ -471,6 +471,7 @@ if UBICACION_DESDE not in ('esp32', 'emulador'):
     UBICACION_DESDE = 'esp32'
 VEHICULO_EMULADO = 1            # el Auto 1 (ESP32), el mismo que imita el emulador
 ML_ESP32_MAX_EDAD_S = 30        # estilo/calificacion/maniobras mas viejos no se usan
+_aviso_datos_ml_t = 0.0         # ultima vez que se aviso que se ignoran "Datos ML" (modo esp32)
 
 # Ultimos resultados de la ESP32 (los escribe y lee solo udp_listener; el lock es por seguridad)
 _ml_esp32 = {'estilo': None, 'calificacion': None, 't': None, 'maniobras': []}   # maniobras: [(t, nombre)]
@@ -518,6 +519,7 @@ def aplicar_ml_esp32(datos):
     datos['eventos'] = ','.join(maniobras) if maniobras else 'ninguno'
 
 def udp_listener():
+    global _aviso_datos_ml_t
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', UDP_PORT))
     print(f"Escuchando mensajes UDP en el puerto {UDP_PORT}...")
@@ -551,6 +553,28 @@ def udp_listener():
                 registrar_inicio_viaje(vehiculo)
             else:
                 registrar_fin_viaje(vehiculo)
+            continue
+
+        # "Datos ML": mensaje de la ESP32 en modo sintetico, sin coordenadas (estilo,
+        # evento, calificacion y eventos cada 10 s). Solo sirve con
+        # UBICACION_DESDE=emulador: se guarda y se pone en la ruta del emulador.
+        if marca == "Datos ML":
+            vehiculo = extraer_vehiculo(lineas[1:])
+            if vehiculo is None:
+                print(f"Datos ML descartados: vehiculo invalido desde {addr[0]}.")
+                continue
+            if not ruta_desde_emulador(vehiculo):
+                if time.monotonic() - _aviso_datos_ml_t >= 60:       # un aviso por minuto
+                    _aviso_datos_ml_t = time.monotonic()
+                    print(f"--> Datos ML del vehiculo {vehiculo} ignorados: solo se usan para el vehiculo "
+                          f"{VEHICULO_EMULADO} con UBICACION_DESDE=emulador (ahora: {UBICACION_DESDE}).")
+                continue
+            guardar_ml_esp32({
+                'estilo': extraer_campo(lineas[1:], 'Estilo', ESTILOS),
+                'evento': extraer_campo(lineas[1:], 'Evento', EVENTOS),
+                'calificacion': extraer_calificacion(lineas[1:]),
+                'eventos': extraer_eventos(lineas[1:]),
+            })
             continue
 
         if len(lineas) >= 5:
