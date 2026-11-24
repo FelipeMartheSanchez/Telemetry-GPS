@@ -1,5 +1,6 @@
 import os
 import re
+import hmac
 import math
 import socket
 import json
@@ -12,7 +13,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, redirect
 from flask_socketio import SocketIO
 
 # Carga las variables del archivo .env que esta junto a app.py.
@@ -1327,6 +1328,10 @@ def api_direccion():
 # cierra viajes y calcula el score). Solo se activa con EMULADOR=1 en el .env:
 # ponerlo SOLO en dev, para no llenar la base de produccion de viajes falsos.
 EMULADOR_ACTIVO = os.getenv('EMULADOR', '0').strip() == '1'
+# Clave para acceder a /emulador y /api/emulador. Si esta vacia, el acceso
+# queda bloqueado por seguridad incluso si EMULADOR=1.
+EMULADOR_CLAVE = os.getenv('EMULADOR_CLAVE', '').strip()
+EMULADOR_COOKIE = 'emulador_auth'
 EMULADOR_VEHICULO = 1
 # Destinos, igual que la ESP32 (que envia a los 4 servidores):
 #   'local' -> solo esta instancia (127.0.0.1, su propio UDP_PORT)
@@ -1386,19 +1391,53 @@ def armar_mensaje_emulador(d):
         'Origen: emulador',
     ])
 
-@app.route('/emulador')
+def _token_emulador():
+    return hmac.new(EMULADOR_CLAVE.encode('utf-8'), b'emulador-ok', 'sha256').hexdigest()
+
+def emulador_autenticado():
+    if not EMULADOR_CLAVE:
+        return False
+    cookie = request.cookies.get(EMULADOR_COOKIE, '')
+    return bool(cookie) and hmac.compare_digest(cookie, _token_emulador())
+
+@app.route('/emulador', methods=['GET', 'POST'])
 def emulador():
     if not EMULADOR_ACTIVO:
         return 'No encontrado', 404
+    if not EMULADOR_CLAVE:
+        return render_template('emulador_login.html', nombre_pagina=NOMBRE_PAGINA,
+                               sin_clave=True, error=None), 403
+    if request.method == 'POST':
+        clave = request.form.get('clave', '')
+        if hmac.compare_digest(clave, EMULADOR_CLAVE):
+            resp = redirect('/emulador')
+            resp.set_cookie(EMULADOR_COOKIE, _token_emulador(),
+                            httponly=True, samesite='Lax', max_age=8 * 3600, path='/')
+            return resp
+        return render_template('emulador_login.html', nombre_pagina=NOMBRE_PAGINA,
+                               sin_clave=False, error='Clave incorrecta.'), 401
+    if not emulador_autenticado():
+        return render_template('emulador_login.html', nombre_pagina=NOMBRE_PAGINA,
+                               sin_clave=False, error=None)
     # Con UBICACION_DESDE=emulador el estilo y los eventos vienen de la ESP32:
     # la pagina oculta esos controles y solo emula la ruta.
     return render_template('emulador.html', nombre_pagina=NOMBRE_PAGINA,
                            solo_ruta=(UBICACION_DESDE == 'emulador'))
 
+@app.route('/emulador/salir', methods=['POST'])
+def emulador_salir():
+    if not EMULADOR_ACTIVO:
+        return 'No encontrado', 404
+    resp = redirect('/emulador')
+    resp.delete_cookie(EMULADOR_COOKIE, path='/')
+    return resp
+
 @app.route('/api/emulador', methods=['POST'])
 def api_emulador():
     if not EMULADOR_ACTIVO:
         return jsonify({'error': 'El emulador no esta activo en esta instancia'}), 404
+    if not emulador_autenticado():
+        return jsonify({'error': 'Acceso no autorizado. Inicia sesion en /emulador'}), 401
     datos = request.get_json(silent=True) or {}
     try:
         mensaje = armar_mensaje_emulador(datos)
@@ -1426,6 +1465,8 @@ if __name__ == '__main__':
     print(f"Ubicacion del Auto 1 desde: {UBICACION_DESDE} (UBICACION_DESDE en el .env)")
     if EMULADOR_ACTIVO:
         print("Emulador del Auto 1 ACTIVO en /emulador (EMULADOR=1 en el .env)")
+        estado_clave = "protegido con EMULADOR_CLAVE" if EMULADOR_CLAVE else "BLOQUEADO (falta EMULADOR_CLAVE en el .env)"
+        print(f"  -> Acceso a /emulador: {estado_clave}")
     socketio.start_background_task(udp_listener)
     socketio.start_background_task(vigilar_inactividad)
     print(f"Iniciando servidor Web en el puerto {WEB_PORT}...")

@@ -50,6 +50,8 @@
             background: #fef3c7; color: #92400e; font-size: 0.7rem; font-weight: 600;
         }
         .barra-sup a { font-size: 0.78rem; font-weight: 600; color: var(--azul); text-decoration: none; }
+        .barra-sup form { margin: 0; }
+        .barra-sup .btn-salir { padding: 4px 10px; min-height: 28px; font-size: 0.72rem; }
 
         /* Cuerpo: mapa + panel (lado a lado en PC, apilados en celular) */
         .cuerpo { flex: 1 1 auto; display: flex; min-height: 0; }
@@ -158,6 +160,9 @@
         <span class="instancia">{{ nombre_pagina }}</span>
         <span class="aviso-prueba">Datos de prueba</span>
         <a href="/" target="_blank" rel="noopener">Ver en vivo ↗</a>
+        <form method="post" action="/emulador/salir">
+            <button type="submit" class="btn-salir">Salir</button>
+        </form>
     </header>
 
     <div class="cuerpo">
