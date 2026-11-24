@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Emulador Auto 1 - {{ nombre_pagina }}</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Leaflet (mismo mapa que las otras paginas) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        /* Emulador del Auto 1: imita a la ESP32 (ruta reproducida + estilo,
+           calificacion y eventos). Cada envio llega al servidor igual que un
+           paquete UDP real de la placa. */
+        :root {
+            --azul: #2563eb;
+            --azul-osc: #1d4ed8;
+            --tinta: #0f172a;
+            --gris: #64748b;
+            --borde: #e2e8f0;
+            --fondo: #f1f5f9;
+            --verde: #2E9E5B;
+            --amarillo: #E0A800;
+            --rojo: #D64545;
+        }
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; }
+        body {
+            font-family: 'Poppins', system-ui, sans-serif;
+            color: var(--tinta);
+            background: var(--fondo);
+            display: flex;
+            flex-direction: column;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        /* Barra superior */
+        .barra-sup {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            padding: 8px 14px; background: #ffffff; border-bottom: 1px solid var(--borde);
+        }
+        .barra-sup h1 { margin: 0; font-size: 1rem; font-weight: 700; }
+        .barra-sup .instancia { font-size: 0.72rem; color: var(--gris); }
+        .barra-sup .aviso-prueba {
+            margin-left: auto; padding: 3px 10px; border-radius: 999px;
+            background: #fef3c7; color: #92400e; font-size: 0.7rem; font-weight: 600;
+        }
+        .barra-sup a { font-size: 0.78rem; font-weight: 600; color: var(--azul); text-decoration: none; }
+        .barra-sup form { margin: 0; }
+        .barra-sup .btn-salir { padding: 4px 10px; min-height: 28px; font-size: 0.72rem; }
+
+        /* Cuerpo: mapa + panel (lado a lado en PC, apilados en celular) */
+        .cuerpo { flex: 1 1 auto; display: flex; min-height: 0; }
+        #map { flex: 1 1 auto; min-height: 0; }
+        .panel {
+            flex: none; width: 380px; overflow-y: auto; padding: 12px;
+            background: var(--fondo); border-left: 1px solid var(--borde);
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        @media (max-width: 760px) {
+            .cuerpo { flex-direction: column; }
+            #map { flex: none; height: 42vh; height: 42dvh; }
+            .panel { width: 100%; flex: 1 1 auto; border-left: none; border-top: 1px solid var(--borde);
+                     padding: 10px 10px calc(14px + env(safe-area-inset-bottom, 0px)); }
+        }
+
+        .tarjeta {
+            background: #ffffff; border: 1px solid var(--borde); border-radius: 14px;
+            padding: 10px 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        }
+        .tarjeta h2 {
+            margin: 0 0 8px; font-size: 0.74rem; font-weight: 700; letter-spacing: 0.04em;
+            text-transform: uppercase; color: var(--gris);
+        }
+        .ayuda { margin: 0 0 8px; font-size: 0.74rem; color: var(--gris); line-height: 1.35; }
+
+        .fila { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .fila + .fila { margin-top: 8px; }
+        .fila label.etq { font-size: 0.78rem; font-weight: 600; min-width: 92px; }
+        .valor { margin-left: auto; font-size: 0.82rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+        button {
+            font-family: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+            border-radius: 999px; border: 1px solid var(--borde); background: #ffffff;
+            color: #334155; padding: 7px 12px; min-height: 36px;
+        }
+        button:hover:not(:disabled) { background: #f8fafc; }
+        button:disabled { opacity: 0.45; cursor: default; }
+        button.primario { background: var(--azul); border-color: var(--azul); color: #ffffff; }
+        button.primario:hover:not(:disabled) { background: var(--azul-osc); }
+        button.peligro { background: #fee2e2; border-color: #fecaca; color: #991b1b; }
+        button.activo { background: var(--azul); border-color: var(--azul); color: #ffffff; }
+
+        input[type="range"] { flex: 1 1 140px; accent-color: var(--azul); }
+        .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 500; cursor: pointer; }
+
+        /* Segmentados (estilo, multiplicador) */
+        .segmentado { display: flex; flex-wrap: wrap; gap: 4px; }
+        .segmentado button { padding: 6px 10px; min-height: 32px; }
+        .segmentado button[data-estilo="cauteloso"].activo { background: var(--verde); border-color: var(--verde); }
+        .segmentado button[data-estilo="normal"].activo { background: var(--amarillo); border-color: var(--amarillo); color: var(--tinta); }
+        .segmentado button[data-estilo="agresivo"].activo { background: var(--rojo); border-color: var(--rojo); }
+        .segmentado button[data-estilo="sin_dato"].activo { background: #9AA0A6; border-color: #9AA0A6; }
+
+        /* Botones de eventos: grandes para el celular */
+        .eventos { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .eventos button {
+            border-radius: 12px; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 6px;
+            background: #fff7ed; border-color: #fed7aa; color: #9a3412;
+        }
+        .eventos button .ico { font-size: 1.05rem; }
+        .pendientes { display: flex; flex-wrap: wrap; gap: 4px; min-height: 26px; margin-top: 8px; align-items: center; }
+        .pendientes .vacio { font-size: 0.74rem; color: var(--gris); }
+        .pendientes .chip {
+            display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+            background: #dc2626; color: #ffffff; font-size: 0.72rem; font-weight: 600;
+        }
+
+        /* Estado del viaje */
+        .estado-viaje { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+        .estado-viaje div { background: var(--fondo); border-radius: 10px; padding: 5px 6px; text-align: center; }
+        .estado-viaje b { display: block; font-size: 0.86rem; font-variant-numeric: tabular-nums; }
+        .estado-viaje span { font-size: 0.62rem; color: var(--gris); text-transform: uppercase; letter-spacing: 0.03em; }
+        .linea-estado { margin-top: 8px; font-size: 0.76rem; font-weight: 600; color: #334155; }
+        .linea-estado.error { color: #b91c1c; }
+        .controles-viaje { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .controles-viaje button { border-radius: 12px; min-height: 44px; }
+
+        /* Registro de mensajes */
+        .destino { margin-bottom: 8px; }
+        .destino select {
+            flex: 1 1 180px; min-width: 0; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--borde);
+            font-family: inherit; font-size: 16px; background: #ffffff; color: var(--tinta);
+        }
+        @media (min-width: 761px) { .destino select { font-size: 0.8rem; } }
+        .aviso-destino { margin: 0 0 8px; font-size: 0.72rem; color: var(--gris); line-height: 1.35; }
+        .aviso-destino.prod { color: #991b1b; font-weight: 600; }
+        details.registro summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; }
+        #registro {
+            margin: 8px 0 0; max-height: 220px; overflow: auto; padding: 8px; border-radius: 10px;
+            background: #0f172a; color: #e2e8f0; font: 0.68rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+            white-space: pre-wrap;
+        }
+
+        /* Marcadores del mapa */
+        .punto-ruta {
+            width: 14px; height: 14px; border-radius: 50%; background: #ffffff;
+            border: 3px solid var(--azul); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+        .icono-auto { font-size: 26px; line-height: 30px; text-align: center; filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)); }
+    </style>
+</head>
+<body>
+    <header class="barra-sup">
+        <h1>🚚 Emulador del Auto 1</h1>
+        <span class="instancia">{{ nombre_pagina }}</span>
+        <span class="aviso-prueba">Datos de prueba</span>
+        <a href="/" target="_blank" rel="noopener">Ver en vivo ↗</a>
+        <form method="post" action="/emulador/salir">
+            <button type="submit" class="btn-salir">Salir</button>
+        </form>
+    </header>
+
+    <div class="cuerpo">
+        <div id="map"></div>
+
+        <aside class="panel">
+            <!-- 1. Ruta -->
+            <section class="tarjeta">
+                <h2>1 · Ruta</h2>
+                <p class="ayuda">Toca el mapa para marcar los puntos de la ruta, en orden. Con «Ajustar a las calles» la ruta sigue las vías.</p>
+                <div class="fila">
+                    <button type="button" id="btnDeshacer">↶ Deshacer</button>
+                    <button type="button" id="btnBorrar">Borrar ruta</button>
+                    <button type="button" id="btnUbicacion">📍 Mi ubicación</button>
+                </div>
+                <div class="fila">
+                    <label class="chk"><input type="checkbox" id="chkCalles" checked> Ajustar a las calles</label>
+                    <span class="valor" id="txtRuta">Sin ruta</span>
+                </div>
+            </section>
+
+            <!-- 2. Viaje -->
+            <section class="tarjeta">
+                <h2>2 · Viaje</h2>
+                <div class="fila destino">
+                    <label class="etq" for="selDestino">Enviar a</label>
+                    <select id="selDestino">
+                        <option value="dev" selected>4 instancias · dev</option>
+                        <option value="prod">4 instancias · producción</option>
+                        <option value="local">Solo esta instancia</option>
+                    </select>
+                </div>
+                <div class="aviso-destino" id="avisoDestino"></div>
+                <div class="controles-viaje">
+                    <button type="button" id="btnIniciar" class="primario">▶ Iniciar viaje</button>
+                    <button type="button" id="btnPausa" disabled>⏸ Detener carro</button>
+                    <button type="button" id="btnSenal" disabled>📶 Cortar señal</button>
+                    <button type="button" id="btnFinalizar" class="peligro" disabled>■ Finalizar viaje</button>
+                </div>
+                <div class="fila">
+                    <label class="etq" for="rngVel">Velocidad</label>
+                    <input type="range" id="rngVel" min="5" max="120" step="5" value="40">
+                    <span class="valor" id="txtVel">40 km/h</span>
+                </div>
+                <div class="fila">
+                    <label class="etq">Rapidez</label>
+                    <div class="segmentado" id="segMult" role="group" aria-label="Rapidez de la simulación">
+                        <button type="button" data-mult="1" class="activo" title="Tiempo real: un envío cada 10 s">×1</button>
+                        <button type="button" data-mult="2">×2</button>
+                        <button type="button" data-mult="5">×5</button>
+                        <button type="button" data-mult="10">×10</button>
+                    </div>
+                </div>
+                <div class="fila">
+                    <label class="chk"><input type="checkbox" id="chkAutoFin" checked> Finalizar el viaje al llegar al final de la ruta</label>
+                </div>
+                <div class="estado-viaje">
+                    <div><b id="txtKm">0.00</b><span>km</span></div>
+                    <div><b id="txtTiempo">0:00</b><span>tiempo</span></div>
+                    <div><b id="txtEnvios">0</b><span>envíos</span></div>
+                    <div><b id="txtProximo">–</b><span>próximo</span></div>
+                </div>
+                <div class="linea-estado" id="txtEstado">Marca una ruta y pulsa «Iniciar viaje».</div>
+            </section>
+
+            {% if solo_ruta %}
+            <!-- UBICACION_DESDE=emulador: estilo, calificacion y eventos vienen de la ESP32 -->
+            <section class="tarjeta">
+                <h2>3 · Estilo y eventos</h2>
+                <p class="ayuda">Vienen de la ESP32 del Auto 1: el emulador solo envía la ruta.
+                    Cada ubicación se guarda con el último estilo y calificación de la placa
+                    y con las maniobras que detectó desde la ubicación anterior.
+                    No presiones el botón BOOT de la placa: dejaría de enviar estilo y eventos.</p>
+            </section>
+            {% endif %}
+
+            <section class="tarjeta"{% if solo_ruta %} style="display:none"{% endif %}>
+                <h2>3 · Eventos bruscos</h2>
+                <p class="ayuda">Cada toque agrega la maniobra al próximo envío (máx. 4 por tramo de 10 s, como la placa).</p>
+                <div class="eventos">
+                    <button type="button" data-evento="aceleracion_brusca"><span class="ico">▲</span> Acelerón</button>
+                    <button type="button" data-evento="frenado_brusco"><span class="ico">■</span> Frenado fuerte</button>
+                    <button type="button" data-evento="giro_izquierda_brusco"><span class="ico">↰</span> Giro izquierda</button>
+                    <button type="button" data-evento="giro_derecha_brusco"><span class="ico">↱</span> Giro derecha</button>
+                </div>
+                <div class="pendientes" id="pendientes"></div>
+                <div class="fila">
+                    <button type="button" id="btnEnviarYa" class="primario" disabled>Enviar ahora</button>
+                    <button type="button" id="btnLimpiarEv">Quitar pendientes</button>
+                </div>
+            </section>
+
+            <!-- 4. Lo que "detecta" la placa -->
+            <section class="tarjeta"{% if solo_ruta %} style="display:none"{% endif %}>
+                <h2>4 · Estilo y calificación</h2>
+                <div class="fila">
+                    <label class="etq">Estilo</label>
+                    <div class="segmentado" id="segEstilo" role="group" aria-label="Estilo de manejo">
+                        <button type="button" data-estilo="cauteloso" class="activo">Cauteloso</button>
+                        <button type="button" data-estilo="normal">Normal</button>
+                        <button type="button" data-estilo="agresivo">Agresivo</button>
+                        <button type="button" data-estilo="sin_dato">Sin dato</button>
+                    </div>
+                </div>
+                <div class="fila">
+                    <label class="etq" for="rngCalif">Calificación</label>
+                    <input type="range" id="rngCalif" min="0" max="100" step="1" value="85">
+                    <span class="valor" id="txtCalif">85</span>
+                </div>
+                <div class="fila">
+                    <label class="chk"><input type="checkbox" id="chkSinCalif"> Enviar calificación «sin_dato»</label>
+                </div>
+            </section>
+
+            <section class="tarjeta">
+                <details class="registro">
+                    <summary>Mensajes enviados (formato de la ESP32)</summary>
+                    <pre id="registro">Todavía no se ha enviado nada.</pre>
+                </details>
+            </section>
+        </aside>
+    </div>
+
+    <script>
+        // ===== Configuracion =====
+        const INTERVALO_S = 10;          // la ESP32 envia cada 10 s
+        // UBICACION_DESDE=emulador: solo se emula la ruta (estilo y eventos vienen de la ESP32)
+        const SOLO_RUTA = {{ 'true' if solo_ruta else 'false' }};
+        const TICK_MS = 200;             // paso de la animacion
+        // Tras FIN_RECORRIDO el servidor acepta puntos 15 s mas para ese viaje y
+        // calcula el score a los 20 s: un viaje nuevo antes de eso se mezclaria.
+        const ESPERA_NUEVO_VIAJE_MS = 20000;
+        const MAX_EVENTOS = 4;           // igual que MAX_EVENTOS_TRAMO en app.py
+        const CENTRO = [10.9878, -74.7889];   // Barranquilla
+        const EVENTOS_UI = {
+            aceleracion_brusca:    { texto: 'Acelerón',       icono: '▲' },
+            frenado_brusco:        { texto: 'Frenado fuerte', icono: '■' },
+            giro_derecha_brusco:   { texto: 'Giro derecha',   icono: '↱' },
+            giro_izquierda_brusco: { texto: 'Giro izquierda', icono: '↰' }
+        };
+
+        const $ = (id) => document.getElementById(id);
+
+        // ===== Mapa =====
+        const map = L.map('map', { zoomControl: true }).setView(CENTRO, 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        const capaPuntos = L.layerGroup().addTo(map);
+        const lineaRuta = L.polyline([], { color: '#2563eb', weight: 5, opacity: 0.75 }).addTo(map);
+        const lineaHecha = L.polyline([], { color: '#16a34a', weight: 6, opacity: 0.9 }).addTo(map);
+        const marcadorAuto = L.marker(CENTRO, {
+            icon: L.divIcon({ html: '🚚', className: 'icono-auto', iconSize: [30, 30], iconAnchor: [15, 15] }),
+            zIndexOffset: 1000
+        });
+
+        // ===== Estado =====
+        let waypoints = [];       // puntos que toca el usuario
+        let ruta = [];            // geometria completa [[lat, lon], ...]
+        let acumulado = [0];      // metros acumulados en cada vertice de la ruta
+        let pedidoRuta = 0;       // para ignorar respuestas viejas del servicio de calles
+
+        const sim = {
+            enViaje: false,       // entre INICIO_RECORRIDO y FIN_RECORRIDO
+            detenido: false,      // el carro no avanza (pero la placa sigue enviando)
+            sinSenal: false,      // la placa no envia (prueba del cierre automatico)
+            metros: 0,            // distancia recorrida sobre la ruta
+            tiempo: 0,            // segundos simulados del viaje
+            desdeEnvio: 0,        // segundos simulados desde el ultimo envio
+            envios: 0,
+            mult: 1,
+            timer: null,
+            ultimoTick: 0,
+            llego: false
+        };
+        let estilo = 'cauteloso';
+        let pendientes = [];
+        let enviando = false;
+        let wakeLock = null;
+        let esperaHasta = 0;      // no se puede iniciar otro viaje antes de esta hora
+        let ultimoEnvioMs = 0;    // el servidor descarta dos ubicaciones con la misma hora (mismo segundo)
+
+        // ===== Geometria =====
+        function distancia(a, b) {          // Haversine, metros
+            const R = 6371000, rad = Math.PI / 180;
+            const dLat = (b[0] - a[0]) * rad, dLon = (b[1] - a[1]) * rad;
+            const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLon / 2) ** 2;
+            return 2 * R * Math.asin(Math.sqrt(h));
+        }
+        function fijarRuta(puntos) {
+            ruta = puntos;
+            acumulado = [0];
+            for (let i = 1; i < ruta.length; i++) acumulado.push(acumulado[i - 1] + distancia(ruta[i - 1], ruta[i]));
+            lineaRuta.setLatLngs(ruta);
+            actualizarTextoRuta();
+            actualizarBotones();
+        }
+        function largoRuta() { return acumulado[acumulado.length - 1] || 0; }
+        function posicionEn(m) {            // punto de la ruta a m metros del inicio
+            if (ruta.length === 0) return null;
+            if (m <= 0) return ruta[0];
+            if (m >= largoRuta()) return ruta[ruta.length - 1];
+            let i = 1;
+            while (acumulado[i] < m) i++;
+            const tramo = acumulado[i] - acumulado[i - 1] || 1;
+            const f = (m - acumulado[i - 1]) / tramo;
+            return [ruta[i - 1][0] + (ruta[i][0] - ruta[i - 1][0]) * f, ruta[i - 1][1] + (ruta[i][1] - ruta[i - 1][1]) * f];
+        }
+        function recorridoHasta(m) {        // vertices recorridos + posicion actual
+            const pts = [];
+            for (let i = 0; i < ruta.length && acumulado[i] <= m; i++) pts.push(ruta[i]);
+            const p = posicionEn(m);
+            if (p) pts.push(p);
+            return pts;
+        }
+
+        // ===== Ruta: tocar el mapa =====
+        map.on('click', function(e) {
+            if (sim.enViaje) return;        // la ruta no cambia durante el viaje
+            waypoints.push([e.latlng.lat, e.latlng.lng]);
+            dibujarWaypoints();
+            recalcularRuta();
+        });
+        function dibujarWaypoints() {
+            capaPuntos.clearLayers();
+            waypoints.forEach(function(w, i) {
+                L.marker(w, { icon: L.divIcon({ html: '', className: 'punto-ruta', iconSize: [14, 14], iconAnchor: [7, 7] }),
+                              title: 'Punto ' + (i + 1), interactive: false }).addTo(capaPuntos);
+            });
+        }
+        async function recalcularRuta() {
+            const id = ++pedidoRuta;
+            if (waypoints.length < 2) { fijarRuta(waypoints.slice()); return; }
+            fijarRuta(waypoints.slice());                     // linea recta mientras llega la de calles
+            if (!$('chkCalles').checked) return;
+            $('txtRuta').textContent = 'Ajustando…';
+            try {
+                // Servicio publico de rutas de OpenStreetMap (OSRM). Si falla, queda la linea recta.
+                const coords = waypoints.map(w => w[1].toFixed(6) + ',' + w[0].toFixed(6)).join(';');
+                const ctrl = new AbortController();
+                const espera = setTimeout(() => ctrl.abort(), 8000);
+                const r = await fetch('https://router.project-osrm.org/route/v1/driving/' + coords +
+                                      '?overview=full&geometries=geojson', { signal: ctrl.signal });
+                clearTimeout(espera);
+                const datos = await r.json();
+                if (id !== pedidoRuta) return;                // llego tarde: ya hay otra ruta
+                if (datos.code !== 'Ok' || !datos.routes || !datos.routes.length) throw new Error(datos.code);
+                fijarRuta(datos.routes[0].geometry.coordinates.map(c => [c[1], c[0]]));
+            } catch (err) {
+                if (id !== pedidoRuta) return;
+                fijarRuta(waypoints.slice());
+                $('txtRuta').textContent = largoTexto() + ' (línea recta)';
+            }
+        }
+        function largoTexto() { return (largoRuta() / 1000).toFixed(2) + ' km'; }
+        function actualizarTextoRuta() {
+            $('txtRuta').textContent = ruta.length < 2 ? (waypoints.length === 1 ? '1 punto: toca otro' : 'Sin ruta') : largoTexto();
+        }
+        $('chkCalles').addEventListener('change', recalcularRuta);
+        $('btnDeshacer').addEventListener('click', function() {
+            if (sim.enViaje || !waypoints.length) return;
+            waypoints.pop(); dibujarWaypoints(); recalcularRuta();
+        });
+        $('btnBorrar').addEventListener('click', function() {
+            if (sim.enViaje) return;
+            waypoints = []; dibujarWaypoints(); recalcularRuta();
+            lineaHecha.setLatLngs([]); map.removeLayer(marcadorAuto);
+        });
+        $('btnUbicacion').addEventListener('click', function() {
+            if (!navigator.geolocation) return;
+            navigator.geolocation.getCurrentPosition(
+                p => map.setView([p.coords.latitude, p.coords.longitude], 16),
+                () => mostrarEstado('No se pudo obtener tu ubicación.', true),
+                { enableHighAccuracy: true, timeout: 10000 });
+        });
+
+        // ===== Envio al servidor =====
+        // El destino se fija al iniciar el viaje: INICIO, puntos y FIN van a los mismos servidores.
+        let destinoViaje = 'dev';
+        const TEXTO_DESTINO = {
+            dev: 'Envía a felipegps, carlosgps, davidgps y alejandrogps por el puerto UDP 5001: llega a las 4 páginas de dev (8080). Los viajes quedan en las bases de dev.',
+            prod: '⚠ Envía a los 4 servidores por el puerto UDP 5000, igual que la ESP32: los viajes falsos quedan en las bases reales de todos.',
+            local: 'Solo llega a esta instancia.'
+        };
+        function pintarDestino() {
+            const v = $('selDestino').value;
+            $('avisoDestino').textContent = TEXTO_DESTINO[v];
+            $('avisoDestino').classList.toggle('prod', v === 'prod');
+        }
+        $('selDestino').addEventListener('change', pintarDestino);
+
+        async function enviar(cuerpo) {
+            cuerpo.destino = destinoViaje;
+            const r = await fetch('/api/emulador', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
+            });
+            const datos = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(datos.error || ('HTTP ' + r.status));
+            const fallidos = (datos.destinos || []).filter(d => !d.ok);
+            const resumen = (datos.destinos || []).map(d => (d.ok ? '✓ ' : '✗ ') + d.host + ':' + d.puerto).join('  ');
+            registrar(datos.mensaje + (resumen ? '\n→ ' + resumen : ''));
+            if (fallidos.length) mostrarEstado('No se pudo enviar a: ' + fallidos.map(d => d.host).join(', '), true);
+            return datos;
+        }
+        function registrar(texto) {
+            const pre = $('registro');
+            const hora = new Date().toLocaleTimeString('es-CO');
+            const previo = pre.dataset.lleno ? pre.textContent : '';
+            pre.dataset.lleno = '1';
+            const bloques = ('[' + hora + ']\n' + texto + '\n\n' + previo).split('\n\n').slice(0, 20);
+            pre.textContent = bloques.join('\n\n');
+        }
+        async function enviarUbicacion() {
+            if (sim.sinSenal || enviando) return;
+            const p = posicionEn(sim.metros);
+            if (!p) return;
+            const eventos = SOLO_RUTA ? [] : pendientes.slice();
+            const cuerpo = SOLO_RUTA
+                ? { tipo: 'ubicacion', lat: p[0], lon: p[1], estilo: 'sin_dato', eventos: [], calificacion: null }
+                : {
+                    tipo: 'ubicacion', lat: p[0], lon: p[1], estilo: estilo, eventos: eventos,
+                    calificacion: $('chkSinCalif').checked ? null : Number($('rngCalif').value)
+                };
+            enviando = true;
+            try {
+                const falta = 1100 - (Date.now() - ultimoEnvioMs);
+                if (falta > 0) await new Promise(r => setTimeout(r, falta));
+                ultimoEnvioMs = Date.now();
+                await enviar(cuerpo);
+                sim.envios++;
+                // Solo se quitan las maniobras que salieron en este envio
+                pendientes = pendientes.slice(eventos.length);
+                pintarPendientes();
+                if (eventos.length) marcarEventos(p, eventos);
+                mostrarEstado(sim.detenido ? 'Carro detenido: la placa sigue enviando cada 10 s.' : 'Enviando como el Auto 1…');
+            } catch (err) {
+                mostrarEstado('Error al enviar: ' + err.message, true);
+            } finally {
+                enviando = false;
+                pintarEstado();
+            }
+        }
+        function marcarEventos(p, eventos) {
+            const icono = eventos.map(e => EVENTOS_UI[e].icono).join('');
+            L.marker(p, { icon: L.divIcon({
+                html: '<div style="display:grid;place-items:center;height:100%;border-radius:12px;border:2px solid #fff;background:#dc2626;color:#fff;font:700 12px sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.4)">' + icono + '</div>',
+                className: '', iconSize: [24 + 12 * (eventos.length - 1), 24], iconAnchor: [12 + 6 * (eventos.length - 1), 12]
+            }), interactive: false }).addTo(capaPuntos);
+        }
+
+        // ===== Simulacion =====
+        function tick() {
+            const ahora = performance.now();
+            const dt = Math.min((ahora - sim.ultimoTick) / 1000, 1) * sim.mult;   // segundos simulados
+            sim.ultimoTick = ahora;
+            if (!sim.enViaje) return;
+            sim.tiempo += dt;
+            sim.desdeEnvio += dt;
+            if (!sim.detenido && !sim.llego) {
+                sim.metros = Math.min(sim.metros + Number($('rngVel').value) / 3.6 * dt, largoRuta());
+                const p = posicionEn(sim.metros);
+                marcadorAuto.setLatLng(p);
+                lineaHecha.setLatLngs(recorridoHasta(sim.metros));
+                if (!map.getBounds().pad(-0.15).contains(p)) map.panTo(p, { animate: true });
+            }
+            if (sim.desdeEnvio >= INTERVALO_S) {
+                sim.desdeEnvio -= INTERVALO_S;
+                enviarUbicacion();
+            }
+            if (!sim.llego && sim.metros >= largoRuta()) llegar();
+            pintarEstado();
+        }
+        async function llegar() {
+            sim.llego = true;
+            if ($('chkAutoFin').checked) {
+                mostrarEstado('Llegó al final de la ruta: enviando el último punto y finalizando…');
+                await enviarUbicacion();
+                await finalizar();
+            } else {
+                sim.detenido = true;
+                mostrarEstado('Llegó al final de la ruta. El carro queda detenido y sigue enviando.');
+                actualizarBotones();
+            }
+        }
+
+        async function iniciar() {
+            if (ruta.length < 2 || sim.enViaje || Date.now() < esperaHasta) return;
+            destinoViaje = $('selDestino').value;
+            if (destinoViaje === 'prod' && !confirm('Vas a enviar datos FALSOS a las 4 páginas de producción (como la ESP32). Los viajes quedarán en las bases reales de todos. ¿Continuar?')) return;
+            $('btnIniciar').disabled = true;
+            try {
+                await enviar({ tipo: 'inicio' });
+            } catch (err) {
+                mostrarEstado('No se pudo iniciar: ' + err.message, true);
+                actualizarBotones();
+                return;
+            }
+            Object.assign(sim, { enViaje: true, detenido: false, sinSenal: false, metros: 0, tiempo: 0,
+                                 desdeEnvio: 0, envios: 0, llego: false, ultimoTick: performance.now() });
+            lineaHecha.setLatLngs([ruta[0]]);
+            marcadorAuto.setLatLng(ruta[0]).addTo(map);
+            map.panTo(ruta[0]);
+            // Primer punto enseguida (la placa envia apenas inicia el viaje con GPS listo)
+            await enviarUbicacion();
+            sim.timer = setInterval(tick, TICK_MS);
+            pedirPantallaEncendida();
+            mostrarEstado('Viaje iniciado. Enviando como el Auto 1…');
+            actualizarBotones();
+        }
+        async function finalizar() {
+            if (!sim.enViaje) return;
+            clearInterval(sim.timer); sim.timer = null;
+            sim.enViaje = false;
+            try {
+                await enviar({ tipo: 'fin' });
+                mostrarEstado('Viaje finalizado. El servidor calcula el score en ~20 s (visible en el historial si el viaje tiene ≥ 2 km).');
+            } catch (err) {
+                mostrarEstado('No se pudo enviar el fin: ' + err.message, true);
+            }
+            soltarPantalla();
+            esperaHasta = Date.now() + ESPERA_NUEVO_VIAJE_MS;
+            const cuenta = setInterval(function() {
+                actualizarBotones();
+                if (Date.now() >= esperaHasta) clearInterval(cuenta);
+            }, 1000);
+            actualizarBotones();
+            pintarEstado();
+        }
+
+        $('btnIniciar').addEventListener('click', iniciar);
+        $('btnFinalizar').addEventListener('click', finalizar);
+        $('btnPausa').addEventListener('click', function() {
+            if (sim.llego) return;
+            sim.detenido = !sim.detenido;
+            mostrarEstado(sim.detenido ? 'Carro detenido: la placa sigue enviando cada 10 s.' : 'En marcha.');
+            actualizarBotones();
+        });
+        $('btnSenal').addEventListener('click', function() {
+            sim.sinSenal = !sim.sinSenal;
+            mostrarEstado(sim.sinSenal
+                ? 'Sin señal: no se envía nada. A los 3 min sin datos el servidor cierra el viaje solo y la página muestra «Viaje finalizado».'
+                : 'Señal recuperada.');
+            actualizarBotones();
+        });
+        $('btnEnviarYa').addEventListener('click', function() {
+            if (!sim.enViaje) return;
+            sim.desdeEnvio = 0;                 // el siguiente envio vuelve a contar 10 s
+            enviarUbicacion();
+        });
+
+        // ===== Controles de estilo, calificacion, eventos, rapidez =====
+        $('segEstilo').addEventListener('click', function(e) {
+            const b = e.target.closest('button[data-estilo]');
+            if (!b) return;
+            estilo = b.dataset.estilo;
+            this.querySelectorAll('button').forEach(x => x.classList.toggle('activo', x === b));
+        });
+        $('segMult').addEventListener('click', function(e) {
+            const b = e.target.closest('button[data-mult]');
+            if (!b) return;
+            sim.mult = Number(b.dataset.mult);
+            this.querySelectorAll('button').forEach(x => x.classList.toggle('activo', x === b));
+            pintarEstado();
+        });
+        $('rngVel').addEventListener('input', () => { $('txtVel').textContent = $('rngVel').value + ' km/h'; });
+        $('rngCalif').addEventListener('input', () => { $('txtCalif').textContent = $('rngCalif').value; });
+        $('chkSinCalif').addEventListener('change', function() {
+            $('rngCalif').disabled = this.checked;
+            $('txtCalif').textContent = this.checked ? 'sin_dato' : $('rngCalif').value;
+        });
+        document.querySelectorAll('.eventos button[data-evento]').forEach(function(b) {
+            b.addEventListener('click', function() {
+                if (pendientes.length >= MAX_EVENTOS) { mostrarEstado('Máximo ' + MAX_EVENTOS + ' maniobras por envío.', true); return; }
+                pendientes.push(b.dataset.evento);
+                pintarPendientes();
+            });
+        });
+        $('btnLimpiarEv').addEventListener('click', function() { pendientes = []; pintarPendientes(); });
+
+        // ===== Pintar =====
+        function pintarPendientes() {
+            const cont = $('pendientes');
+            cont.replaceChildren();
+            if (!pendientes.length) {
+                const s = document.createElement('span'); s.className = 'vacio'; s.textContent = 'Sin maniobras pendientes';
+                cont.appendChild(s); return;
+            }
+            pendientes.forEach(function(e) {
+                const s = document.createElement('span'); s.className = 'chip';
+                s.textContent = EVENTOS_UI[e].icono + ' ' + EVENTOS_UI[e].texto;
+                cont.appendChild(s);
+            });
+        }
+        function pintarEstado() {
+            $('txtKm').textContent = (sim.metros / 1000).toFixed(2);
+            const t = Math.floor(sim.tiempo);
+            $('txtTiempo').textContent = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+            $('txtEnvios').textContent = sim.envios;
+            $('txtProximo').textContent = !sim.enViaje ? '–' : (sim.sinSenal ? 'sin señal'
+                : Math.max(0, Math.ceil((INTERVALO_S - sim.desdeEnvio) / sim.mult)) + ' s');
+        }
+        function mostrarEstado(texto, error) {
+            const el = $('txtEstado');
+            el.textContent = texto;
+            el.classList.toggle('error', Boolean(error));
+        }
+        function actualizarBotones() {
+            const espera = Math.ceil((esperaHasta - Date.now()) / 1000);
+            $('btnIniciar').disabled = sim.enViaje || ruta.length < 2 || espera > 0;
+            $('btnIniciar').textContent = espera > 0 && !sim.enViaje ? 'Nuevo viaje en ' + espera + ' s' : '▶ Iniciar viaje';
+            $('btnPausa').disabled = !sim.enViaje || sim.llego;
+            $('btnPausa').textContent = sim.detenido && !sim.llego ? '▶ Reanudar carro' : '⏸ Detener carro';
+            $('btnSenal').disabled = !sim.enViaje;
+            $('btnSenal').textContent = sim.sinSenal ? '📶 Recuperar señal' : '📶 Cortar señal';
+            $('btnSenal').classList.toggle('activo', sim.sinSenal);
+            $('btnFinalizar').disabled = !sim.enViaje;
+            $('btnEnviarYa').disabled = !sim.enViaje || sim.sinSenal;
+            $('btnDeshacer').disabled = sim.enViaje || !waypoints.length;
+            $('btnBorrar').disabled = sim.enViaje || !waypoints.length;
+            $('selDestino').disabled = sim.enViaje;      // no se cambia a mitad de viaje
+        }
+
+        // Mantener la pantalla encendida durante el viaje (si el navegador lo permite):
+        // con la pantalla apagada el celular pausa la pagina y se dejan de enviar datos.
+        async function pedirPantallaEncendida() {
+            try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { wakeLock = null; }
+        }
+        function soltarPantalla() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
+        document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible' && sim.enViaje) pedirPantallaEncendida();
+        });
+        window.addEventListener('beforeunload', function(e) {
+            if (sim.enViaje) { e.preventDefault(); e.returnValue = ''; }
+        });
+
+        pintarPendientes();
+        pintarEstado();
+        pintarDestino();
+        actualizarBotones();
+    </script>
+</body>
+</html>
