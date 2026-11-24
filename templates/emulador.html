@@ -196,6 +196,13 @@
                     </select>
                 </div>
                 <div class="aviso-destino" id="avisoDestino"></div>
+                <div class="fila" style="margin-bottom: 8px;">
+                    <label class="etq">Estilo y eventos</label>
+                    <div class="segmentado" id="segModo" role="group" aria-label="Origen de estilo y eventos">
+                        <button type="button" data-modo="hibrido" title="Ruta del emulador + estilo y eventos reales de la ESP32">ESP32 (Híbrido)</button>
+                        <button type="button" data-modo="simulado" title="Ruta, estilo y eventos simulados desde esta página">Simulado (Web)</button>
+                    </div>
+                </div>
                 <div class="controles-viaje">
                     <button type="button" id="btnIniciar" class="primario">▶ Iniciar viaje</button>
                     <button type="button" id="btnPausa" disabled>⏸ Detener carro</button>
@@ -228,18 +235,15 @@
                 <div class="linea-estado" id="txtEstado">Marca una ruta y pulsa «Iniciar viaje».</div>
             </section>
 
-            {% if solo_ruta %}
-            <!-- UBICACION_DESDE=emulador: estilo, calificacion y eventos vienen de la ESP32 -->
-            <section class="tarjeta">
-                <h2>3 · Estilo y eventos</h2>
-                <p class="ayuda">Vienen de la ESP32 del Auto 1: el emulador solo envía la ruta.
-                    Cada ubicación se guarda con el último estilo y calificación de la placa
-                    y con las maniobras que detectó desde la ubicación anterior.
+            <section class="tarjeta" id="cardHibrido" style="display:none">
+                <h2>3 · Estilo y eventos (desde ESP32)</h2>
+                <p class="ayuda">Modo híbrido activo para este viaje: el emulador envía la ruta y los servidores
+                    toman automáticamente el estilo, la calificación y las maniobras de la ESP32 del Auto 1.
+                    Al finalizar el viaje, los servidores vuelven solos al modo normal.
                     No presiones el botón BOOT de la placa: dejaría de enviar estilo y eventos.</p>
             </section>
-            {% endif %}
 
-            <section class="tarjeta"{% if solo_ruta %} style="display:none"{% endif %}>
+            <section class="tarjeta" id="cardEventos">
                 <h2>3 · Eventos bruscos</h2>
                 <p class="ayuda">Cada toque agrega la maniobra al próximo envío (máx. 4 por tramo de 10 s, como la placa).</p>
                 <div class="eventos">
@@ -256,7 +260,7 @@
             </section>
 
             <!-- 4. Lo que "detecta" la placa -->
-            <section class="tarjeta"{% if solo_ruta %} style="display:none"{% endif %}>
+            <section class="tarjeta" id="cardEstilo">
                 <h2>4 · Estilo y calificación</h2>
                 <div class="fila">
                     <label class="etq">Estilo</label>
@@ -289,8 +293,8 @@
     <script>
         // ===== Configuracion =====
         const INTERVALO_S = 10;          // la ESP32 envia cada 10 s
-        // UBICACION_DESDE=emulador: solo se emula la ruta (estilo y eventos vienen de la ESP32)
-        const SOLO_RUTA = {{ 'true' if solo_ruta else 'false' }};
+        // Modo inicial del switch: 'hibrido' (ML de la ESP32) o 'simulado' (todo desde la web)
+        let modoML = 'hibrido';
         const TICK_MS = 200;             // paso de la animacion
         // Tras FIN_RECORRIDO el servidor acepta puntos 15 s mas para ese viaje y
         // calcula el score a los 20 s: un viaje nuevo antes de eso se mezclaria.
@@ -457,6 +461,7 @@
 
         async function enviar(cuerpo) {
             cuerpo.destino = destinoViaje;
+            cuerpo.modo = modoML;
             const r = await fetch('/api/emulador', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo)
             });
@@ -480,8 +485,9 @@
             if (sim.sinSenal || enviando) return;
             const p = posicionEn(sim.metros);
             if (!p) return;
-            const eventos = SOLO_RUTA ? [] : pendientes.slice();
-            const cuerpo = SOLO_RUTA
+            const soloRuta = modoML === 'hibrido';
+            const eventos = soloRuta ? [] : pendientes.slice();
+            const cuerpo = soloRuta
                 ? { tipo: 'ubicacion', lat: p[0], lon: p[1], estilo: 'sin_dato', eventos: [], calificacion: null }
                 : {
                     tipo: 'ubicacion', lat: p[0], lon: p[1], estilo: estilo, eventos: eventos,
@@ -614,7 +620,21 @@
             enviarUbicacion();
         });
 
-        // ===== Controles de estilo, calificacion, eventos, rapidez =====
+        // ===== Controles de estilo, calificacion, eventos, rapidez, modo =====
+        function pintarModo() {
+            const hibrido = modoML === 'hibrido';
+            $('segModo').querySelectorAll('button').forEach(b => b.classList.toggle('activo', b.dataset.modo === modoML));
+            $('cardHibrido').style.display = hibrido ? '' : 'none';
+            $('cardEventos').style.display = hibrido ? 'none' : '';
+            $('cardEstilo').style.display = hibrido ? 'none' : '';
+        }
+        $('segModo').addEventListener('click', function(e) {
+            if (sim.enViaje) return;
+            const b = e.target.closest('button[data-modo]');
+            if (!b) return;
+            modoML = b.dataset.modo;
+            pintarModo();
+        });
         $('segEstilo').addEventListener('click', function(e) {
             const b = e.target.closest('button[data-estilo]');
             if (!b) return;
@@ -684,6 +704,7 @@
             $('btnDeshacer').disabled = sim.enViaje || !waypoints.length;
             $('btnBorrar').disabled = sim.enViaje || !waypoints.length;
             $('selDestino').disabled = sim.enViaje;      // no se cambia a mitad de viaje
+            $('segModo').querySelectorAll('button').forEach(b => { b.disabled = sim.enViaje; });
         }
 
         // Mantener la pantalla encendida durante el viaje (si el navegador lo permite):
@@ -702,6 +723,7 @@
         pintarPendientes();
         pintarEstado();
         pintarDestino();
+        pintarModo();
         actualizarBotones();
     </script>
 </body>

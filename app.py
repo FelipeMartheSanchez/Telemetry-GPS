@@ -457,34 +457,57 @@ def actualizar_viaje_vivo(datos):
         return {'calificacion_viaje': promedio, 'km_viaje': round(estado['metros'] / 1000, 2)}
 
 # --- Origen de la ubicacion del Auto 1: ESP32 o emulador ---
-# UBICACION_DESDE en el .env (si no esta: esp32, el comportamiento de siempre).
-#   esp32    -> la ESP32 envia ubicacion + estilo/eventos, y abre y cierra el viaje.
-#   emulador -> la RUTA del Auto 1 viene del emulador (/emulador, mensajes con la
-#               linea "Origen: emulador"), que tambien abre y cierra el viaje. De la
-#               ESP32 solo se usan Estilo, Calificacion y las maniobras: su ubicacion
-#               y sus marcas INICIO/FIN se descartan. Cada ubicacion del emulador se
-#               guarda con el ultimo estilo/calificacion de la ESP32 (si tiene menos
-#               de ML_ESP32_MAX_EDAD_S) y con las maniobras recibidas desde el punto
-#               anterior. El Auto 2 (celular) no cambia.
+# Por defecto todos los servidores trabajan en modo normal ('esp32'): la pagina
+# principal recibe directo la ESP32. Al iniciar un viaje desde /emulador, los
+# paquetes traen "Origen: emulador" y "Modo: hibrido|simulado", activando ese
+# modo automaticamente durante el viaje (y al finalizar o tras TIMEOUT_SIN_DATOS_S
+# el servidor vuelve solo al modo normal).
+# Si UBICACION_DESDE=emulador esta en el .env, queda forzado en modo hibrido.
 UBICACION_DESDE = os.getenv('UBICACION_DESDE', 'esp32').strip().lower()
 if UBICACION_DESDE not in ('esp32', 'emulador'):
     print(f"Aviso: UBICACION_DESDE={UBICACION_DESDE!r} no es valido (esp32 | emulador); se usa esp32.")
     UBICACION_DESDE = 'esp32'
 VEHICULO_EMULADO = 1            # el Auto 1 (ESP32), el mismo que imita el emulador
 ML_ESP32_MAX_EDAD_S = 30        # estilo/calificacion/maniobras mas viejos no se usan
-_aviso_datos_ml_t = 0.0         # ultima vez que se aviso que se ignoran "Datos ML" (modo esp32)
 
-# Ultimos resultados de la ESP32 (los escribe y lee solo udp_listener; el lock es por seguridad)
+# Ultimos resultados de la ESP32 y estado del viaje activo del emulador
 _ml_esp32 = {'estilo': None, 'calificacion': None, 't': None, 'maniobras': []}   # maniobras: [(t, nombre)]
+_emulador_estado = {'modo': None, 'hasta': 0.0}     # modo: 'hibrido' | 'simulado' | None
 _lock_ml_esp32 = threading.Lock()
 
 def es_del_emulador(lineas):
     """True si el paquete trae la linea "Origen: emulador"."""
     return any(re.match(r'^\s*Origen\s*:\s*emulador\s*$', l, re.IGNORECASE) for l in lineas)
 
-def ruta_desde_emulador(vehiculo):
-    """True si la ubicacion de este vehiculo debe venir del emulador."""
-    return UBICACION_DESDE == 'emulador' and vehiculo == VEHICULO_EMULADO
+def extraer_modo_emulador(lineas):
+    """Lee "Modo: hibrido|simulado" de un paquete del emulador (o None si no viene)."""
+    for l in lineas:
+        m = re.match(r'^\s*Modo\s*:\s*(hibrido|simulado)\s*$', l, re.IGNORECASE)
+        if m:
+            return m.group(1).lower()
+    return None
+
+def activar_modo_emulador(modo):
+    """Activa/renueva el modo del emulador durante un viaje (expira tras TIMEOUT_SIN_DATOS_S)."""
+    with _lock_ml_esp32:
+        _emulador_estado['modo'] = modo
+        _emulador_estado['hasta'] = time.monotonic() + TIMEOUT_SIN_DATOS_S
+
+def desactivar_modo_emulador():
+    with _lock_ml_esp32:
+        _emulador_estado['modo'] = None
+        _emulador_estado['hasta'] = 0.0
+
+def modo_emulador_activo(vehiculo):
+    """Devuelve 'hibrido', 'simulado' o None para este vehiculo."""
+    if vehiculo != VEHICULO_EMULADO:
+        return None
+    with _lock_ml_esp32:
+        if _emulador_estado['modo'] and time.monotonic() < _emulador_estado['hasta']:
+            return _emulador_estado['modo']
+        if _emulador_estado['modo']:
+            _emulador_estado['modo'] = None
+    return 'hibrido' if UBICACION_DESDE == 'emulador' else None
 
 def guardar_ml_esp32(datos):
     """Guarda el estilo/calificacion de un mensaje de la ESP32 y acumula sus maniobras."""
@@ -520,7 +543,6 @@ def aplicar_ml_esp32(datos):
     datos['eventos'] = ','.join(maniobras) if maniobras else 'ninguno'
 
 def udp_listener():
-    global _aviso_datos_ml_t
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', UDP_PORT))
     print(f"Escuchando mensajes UDP en el puerto {UDP_PORT}...")
@@ -543,39 +565,45 @@ def udp_listener():
             if vehiculo is None:
                 print(f"Marca descartada: vehiculo invalido desde {addr[0]}.")
                 continue
-            if ruta_desde_emulador(vehiculo) and not es_del_emulador(lineas):
+            del_emulador = es_del_emulador(lineas)
+            modo_activo = modo_emulador_activo(vehiculo)
+            if modo_activo and not del_emulador:
                 print(f"--> {marca} de la ESP32 ignorado: el viaje del vehiculo {vehiculo} "
-                      f"lo controla el emulador (UBICACION_DESDE=emulador).")
+                      f"lo controla el emulador (modo {modo_activo}).")
                 continue
             if marca == "INICIO_RECORRIDO":
-                if ruta_desde_emulador(vehiculo):
-                    limpiar_maniobras_esp32()      # las de antes del viaje no cuentan
+                if del_emulador and vehiculo == VEHICULO_EMULADO:
+                    modo_nuevo = extraer_modo_emulador(lineas[1:]) or (
+                        'hibrido' if UBICACION_DESDE == 'emulador' else 'simulado'
+                    )
+                    activar_modo_emulador(modo_nuevo)
+                    if modo_nuevo == 'hibrido':
+                        limpiar_maniobras_esp32()      # las de antes del viaje no cuentan
+                    print(f"--> Viaje del emulador iniciado (modo: {modo_nuevo}).")
                 reiniciar_viaje_vivo(vehiculo)
                 registrar_inicio_viaje(vehiculo)
             else:
+                if del_emulador and vehiculo == VEHICULO_EMULADO:
+                    desactivar_modo_emulador()
+                    print("--> Viaje del emulador finalizado: volviendo a modo normal.")
                 registrar_fin_viaje(vehiculo)
             continue
 
         # "Datos ML": mensaje de la ESP32 en modo sintetico, sin coordenadas (estilo,
-        # evento, calificacion y eventos cada 10 s). Solo sirve con
-        # UBICACION_DESDE=emulador: se guarda y se pone en la ruta del emulador.
+        # evento, calificacion y eventos cada 10 s). Siempre se guarda en memoria para
+        # que este listo al instante si se inicia un viaje hibrido desde /emulador.
         if marca == "Datos ML":
             vehiculo = extraer_vehiculo(lineas[1:])
             if vehiculo is None:
                 print(f"Datos ML descartados: vehiculo invalido desde {addr[0]}.")
                 continue
-            if not ruta_desde_emulador(vehiculo):
-                if time.monotonic() - _aviso_datos_ml_t >= 60:       # un aviso por minuto
-                    _aviso_datos_ml_t = time.monotonic()
-                    print(f"--> Datos ML del vehiculo {vehiculo} ignorados: solo se usan para el vehiculo "
-                          f"{VEHICULO_EMULADO} con UBICACION_DESDE=emulador (ahora: {UBICACION_DESDE}).")
-                continue
-            guardar_ml_esp32({
-                'estilo': extraer_campo(lineas[1:], 'Estilo', ESTILOS),
-                'evento': extraer_campo(lineas[1:], 'Evento', EVENTOS),
-                'calificacion': extraer_calificacion(lineas[1:]),
-                'eventos': extraer_eventos(lineas[1:]),
-            })
+            if vehiculo == VEHICULO_EMULADO:
+                guardar_ml_esp32({
+                    'estilo': extraer_campo(lineas[1:], 'Estilo', ESTILOS),
+                    'evento': extraer_campo(lineas[1:], 'Evento', EVENTOS),
+                    'calificacion': extraer_calificacion(lineas[1:]),
+                    'eventos': extraer_eventos(lineas[1:]),
+                })
             continue
 
         if len(lineas) >= 5:
@@ -602,13 +630,21 @@ def udp_listener():
                 'calificacion': extraer_calificacion(lineas[5:]),
                 'eventos': extraer_eventos(lineas[5:])
             }
-            if ruta_desde_emulador(vehiculo):
-                if not es_del_emulador(lineas):
-                    # ESP32: su ubicacion se descarta; solo se guarda su estilo/eventos.
-                    guardar_ml_esp32(datos_json)
+            del_emulador = es_del_emulador(lineas)
+            if del_emulador and vehiculo == VEHICULO_EMULADO:
+                modo_pkt = extraer_modo_emulador(lineas[5:])
+                if modo_pkt:
+                    activar_modo_emulador(modo_pkt)
+                if modo_emulador_activo(vehiculo) == 'hibrido':
+                    # Emulador hibrido: su ruta + el estilo/eventos de la ESP32.
+                    aplicar_ml_esp32(datos_json)
+            else:
+                modo_activo = modo_emulador_activo(vehiculo)
+                if modo_activo:
+                    # Hay un viaje del emulador en curso: se descarta la ubicacion de la ESP32.
+                    if modo_activo == 'hibrido':
+                        guardar_ml_esp32(datos_json)
                     continue
-                # Emulador: su ruta + el estilo/eventos de la ESP32.
-                aplicar_ml_esp32(datos_json)
             # Promedio del viaje hasta ahora y km recorridos (para la tarjeta en vivo)
             datos_json.update(actualizar_viaje_vivo(datos_json))
 
@@ -1356,9 +1392,12 @@ def armar_mensaje_emulador(d):
     """Arma el texto UDP con el formato de la ESP32 a partir de lo que envia la
     pagina. Lanza ValueError si algun dato no es valido."""
     tipo = d.get('tipo')
+    modo = d.get('modo', 'simulado')
+    if modo not in ('hibrido', 'simulado'):
+        raise ValueError('modo debe ser hibrido o simulado')
     if tipo in ('inicio', 'fin'):
         marca = 'INICIO_RECORRIDO' if tipo == 'inicio' else 'FIN_RECORRIDO'
-        return f"{marca}\nVehiculo: {EMULADOR_VEHICULO}\nOrigen: emulador"
+        return f"{marca}\nVehiculo: {EMULADOR_VEHICULO}\nOrigen: emulador\nModo: {modo}"
     if tipo != 'ubicacion':
         raise ValueError('tipo debe ser inicio, fin o ubicacion')
     lat, lon = float(d['lat']), float(d['lon'])
@@ -1387,8 +1426,9 @@ def armar_mensaje_emulador(d):
         f"Evento: {eventos[-1] if eventos else 'ninguno'}",
         f"Calificacion: {'sin_dato' if calificacion is None else f'{calificacion:.1f}'}",
         f"Eventos: {','.join(eventos) if eventos else 'ninguno'}",
-        # Asi el servidor distingue al emulador de la ESP32 (las versiones viejas la ignoran)
+        # Asi el servidor distingue al emulador de la ESP32 y el modo elegido
         'Origen: emulador',
+        f'Modo: {modo}',
     ])
 
 def _token_emulador():
